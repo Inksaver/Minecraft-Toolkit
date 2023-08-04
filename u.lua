@@ -1,4 +1,4 @@
-version = 20220423.1005
+version = 20230801.1200
 -- pastebin get idtySGKX u.lua
 -- https://pastebin.com/idtySGKX
 -- Last edited: see version YYYYMMDD.HHMM
@@ -61,14 +61,24 @@ function checkArgs(direction)
 	return numBlocksRequested, doDig
 end
 
+function turnRound()
+	turtle.turnRight()
+	turtle.turnRight()
+end
+
 function doMoves(numBlocksRequested, doDig, direction)
 	local errorMsg = nil
 	local numBlocksMoved = 0
 	local Move, Dig, Detect
+	local turned = false
 	
 	-- re-assign turtle functions to new variables
-	if direction == "forwards" or direction == "backwards" then
+	if direction == "forwards" then
 		Move = turtle.forward
+		Dig = turtle.dig
+		Detect = turtle.detect
+	elseif direction == "backwards" then
+		Move = turtle.back
 		Dig = turtle.dig
 		Detect = turtle.detect
 	elseif direction == "up" then
@@ -81,18 +91,18 @@ function doMoves(numBlocksRequested, doDig, direction)
 		Detect = turtle.detectDown
 	end
 	
-	if direction == "backwards" then
-		turtle.turnRight()
-		turtle.turnRight()
-	end
-	
 	for i = 1, numBlocksRequested, 1 do
 		local moveOK, moveError = Move() -- try to move forward/up/down
 		if doDig then
 			if moveOK then
 				numBlocksMoved = numBlocksMoved + 1
-			else
+			else -- did not move due to obstruction
 				-- while moveOK == false do -- same effect if you prefer.
+				if direction == "backwards" and not turned then
+					turnRound()
+					turned = true
+					Move = turtle.forward
+				end
 				while not moveOK do -- did not move if obstruction
 					local digOK, digError = Dig()
 					if digOK then
@@ -112,15 +122,15 @@ function doMoves(numBlocksRequested, doDig, direction)
 		else
 			if moveOK then
 				numBlocksMoved = numBlocksMoved + 1
-			else
+			else -- move did not succeed
 				errorMsg = moveError
+				break
 			end
 		end
 	end
 	
-	if direction == "backwards" then
-		turtle.turnRight()
-		turtle.turnRight()
+	if turned then -- was "backwards" but obstuction rotated 180 so need to turn round again
+		turnRound()
 	end
 	
 	return numBlocksMoved, errorMsg
