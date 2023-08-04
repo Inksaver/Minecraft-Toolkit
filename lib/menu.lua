@@ -1,10 +1,10 @@
-version = 20230608.1600
+version = 20230723.1200
 --[[
 	Last edited: see version YYYYMMDD.HHMM
 	This is meant to be used as a library for any of your programs.
 	Save it as menu.lua preferably in a subfolder called 'lib'
 	To use it:
-	local menu = require("lib.guiMenu")
+	local menu = require("lib.menu")
 	
 	local prompt = "Choose your option:"
 	-- table of options, whatever text you like from 1 to 10 for turtles, 1 to 16 for computers
@@ -49,6 +49,14 @@ function lib.clearInputField(row)
 	term.setCursorPos(1, row) 		-- reset
 end
 
+function lib.formatPrompt(prompt)
+	if prompt:endsWith(" ") then
+		return prompt
+	end
+	
+	return prompt.." "
+end
+
 function lib.padLeft(text, length, char)
 	--[[Pads str to length len with char from left]]
 	if char == nil then char = ' ' end
@@ -63,7 +71,8 @@ function lib.padRight(text, length, char)
 	--[[
 	Pads string to length len with chars from right
 	test = lib.padRight("test", 10, "+") -> "test++++++"]]
-	if char == nil then char = ' ' end
+	char = char or " "
+	--if char == nil then char = ' ' end
 	local padding = ''
 	for i = 1, length - #text do
 		padding = padding..char
@@ -85,7 +94,6 @@ end
 
 function lib.print(text, fg, bg, width)
 	local cols, rows = term.getSize()
-	isInput = isInput or false
 	width = width or cols
 	if width == 0 then width = cols end
 	if width > cols then width = cols end
@@ -113,7 +121,8 @@ function lib.enterToContinue(prompt, fg, bg)
 	read()
 end
 
-function lib.write(text, fg, bg, width, isInput)
+function lib.write(text, fg, bg, width, isInput, cr)
+	cr = cr or false
 	local cols, rows = term.getSize()
 	isInput = isInput or false
 	width = width or cols
@@ -134,9 +143,12 @@ function lib.write(text, fg, bg, width, isInput)
 		term.setTextColor(currentfg)
 		term.setBackgroundColor(currentbg)
 	end
+	local _, row = term.getCursorPos()
 	if isInput then
-		local _, row = term.getCursorPos()
 		term.setCursorPos(#text + 1, row)
+	end
+	if cr then
+		term.setCursorPos(1, row)
 	end
 end
 
@@ -275,6 +287,9 @@ local function processInput(prompt, minValue, maxValue, dataType, row, fg, bg, d
 	local startRow = row
 	local validInput = false
 	local userInput
+	if type(prompt) == "table" then
+		assert(type(fg)  == "table", "Prompt is a table. Matching number of fg colours required")
+	end
 	while not validInput do
 		for i = startRow, row do
 			lib.clearInputField(row)
@@ -285,13 +300,15 @@ local function processInput(prompt, minValue, maxValue, dataType, row, fg, bg, d
 			term.setCursorPos(1, row)
 			for i = 1, #prompt do
 				if i < #prompt then
-					lib.print(prompt[i], fg, bg)
+					lib.print(prompt[i], fg[i], bg)
 					row = row + 1
 				else -- last line of multi-line prompt
-					lib.write(prompt[i], fg, bg, 0, true)
+					prompt[i] = lib.formatPrompt(prompt[i])
+					lib.write(prompt[i], fg[i], bg, 0, true)
 				end
 			end
 		else
+			prompt = lib.formatPrompt(prompt)
 			lib.write(prompt, fg, bg, width, true)
 		end
 		--lib.write(prompt..">", fg, bg, width, true)
@@ -356,7 +373,7 @@ end
 local function drawMenu(prompt, options, width, height, pp, altMenuPrompt)
 	local mPrompt = menuPrompt -- assign local variable to global value
 	if altMenuPrompt ~= nil then
-		mPrompt = altMenuPrompt -- use different prompt
+		mPrompt = lib.formatPrompt(altMenuPrompt) -- use different prompt
 	else
 		if not pp.allowModifier then
 			mPrompt = "Type number + Enter "
@@ -402,7 +419,7 @@ local function menu(prompt, options, pp, altMenuPrompt)
 	else
 		assert(#options == #pp.itemColours, "Menu options (".. #options..") pp.itemColours (".. #pp.itemColours..") do not match")
 	end
-	
+	prompt = lib.formatPrompt(prompt)
 	while choice == nil and modifier == "" do
 		local col, row = drawMenu(prompt, options, width, height, pp, altMenuPrompt)
 		local isValid, isModifierValid, isNumberValid = false, false, false
@@ -534,5 +551,7 @@ return
 	colorWrite = lib.write,		-- call lib.write function (write using specified colours) using colorWrite()
 	colourText = colourText,	-- call colourText function (print text with embedded colour strings)
 	colorText = colourText,		-- call colourText function (print text with embedded colour strings) using colorText()
-	enterToContinue = lib.enterToContinue -- calls lib.enterToContinue to request user input
+	enterToContinue = lib.enterToContinue, -- calls lib.enterToContinue to request user input
+	padLeft = lib.padLeft,		-- call lib.padLeft
+	padRight = lib.padRight		-- call lib.padRight
 }
