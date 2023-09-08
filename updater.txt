@@ -1,1 +1,14 @@
 pastebin run 8qbeZevX
+
+
+If you get errors when updating the files, take the following action:
+
+1. Save your game
+2. Edit the file:
+    serverconfig/computercraft-server.toml
+    (in your game save folder)
+3. Change line 2:
+    computer_space_limit = 1000000 to
+    computer_space_limit = 2000000 or more
+4. Re-start the game
+5. Run the updater again
