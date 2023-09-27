@@ -1,4 +1,4 @@
-version = 20230802.1800
+version = 20230921.1300
 --[[
 	https://pastebin.com/tvfj90gK
 	Last edited: see version YYYYMMDD.HHMM
@@ -241,8 +241,10 @@ function clsTurtle.saveToLog(self, text, toScreen)
 		end
 		if self.useLog then
 			clsTurtle.appendLine(self, text)
+			return true
 		end
 	end
+	return false
 end
 
 -- getters and setters
@@ -328,7 +330,9 @@ function clsTurtle.attack(self, direction)
 			forward = turtle.attack()
 			up = turtle.attackUp()
 			down = turtle.attackDown()
-			sleep(1.5)
+			if up or down or forward then -- attack in at least 1 direction succeeeded
+				sleep(0.5)
+			end
 			attackLimit = attackLimit - 1
 			if attackLimit <= 0 then
 				break
@@ -336,7 +340,7 @@ function clsTurtle.attack(self, direction)
 		end
 	else
 		while Attack() do --in case mob around
-			sleep(1.5)
+			sleep(0.5)
 			attackLimit = attackLimit - 1
 			if attackLimit <= 0 then
 				break
@@ -378,7 +382,9 @@ function clsTurtle.doMoves(self, numBlocksRequested, direction)
 	if direction == "back" then
 		clsTurtle.turnRight(self, 2)
 	end
-	
+	if numBlocksRequested == 0 then
+		return 0
+	end
 	for i = 1, numBlocksRequested, 1 do
 		local digOK, digError
 		if bypass then
@@ -759,6 +765,27 @@ function clsTurtle.craft(self, item, quantity)
 			else
 				return false, "No logs available"
 			end
+		elseif item == "slab" then -- assume 3 stone -> slab for mob spawner
+			sourceSlot = clsTurtle.getItemSlot(self, "stone", -1) --get the slot number containing stone
+			if sourceSlot > 0 then
+				turtle.select(sourceSlot)
+				turtle.transferTo(16) --move crafting item to 16
+				turtle.select(16)
+				turtle.transferTo(1, 1)
+				turtle.transferTo(2, 1)
+				turtle.transferTo(3, 1)
+				for i = 4, 16 do
+					if turtle.getItemCount(i) > 0 then
+						turtle.select(i)
+						turtle.dropUp()
+					end
+				end
+				if turtle.craft(1) then
+					return true, ""
+				else
+					return false, "Unable to craft slab"
+				end
+			end
 		else
 			return false, "No chest for crafting"
 		end
@@ -994,8 +1021,8 @@ end
 function clsTurtle.dig(self, direction, bypass, slot)
 	--[[ To dig a chest use T:dig(direction, false)  ]]
 	direction = direction or "forward"
+	bypass = bypass or true -- allows digging any block including chests and spawners
 	slot = slot or 1
-	if bypass == nil then bypass = true	end-- allows digging any block including chests and spawners
 	local success = false
 	local blockType = ""
 	local Dig = turtle.dig
@@ -1015,8 +1042,26 @@ function clsTurtle.dig(self, direction, bypass, slot)
 			success = true
 		end
 	end
-
+	turtle.select(1)
 	return success
+end
+
+function clsTurtle.digGravityBlock(self, direction)
+	local Dig = turtle.dig
+	if direction == "up" then
+		Dig = turtle.digUp
+	elseif direction == "down" then
+		Dig = turtle.digDown
+	end
+	local blockType = clsTurtle.getBlockType(self, direction)
+	turtle.select(1)
+	if blockType:find("sand") ~= nil or blockType:find("gravel") ~= nil then
+		Dig()
+		return true
+	else
+		return false
+	end
+
 end
 
 function clsTurtle.digValuable(self, direction)
@@ -1029,11 +1074,16 @@ function clsTurtle.digValuable(self, direction)
 	local isValuable, blockType = clsTurtle.isValuable(self, direction)
 	if isValuable then
 		Dig()
+		return true
 	else --check for lava
 		if blockType:find("lava") ~= nil then
 			clsTurtle.place(self, "minecraft:bucket", -1, direction)  -- will automatically find empty bucket and refuel
+			return true
+		else
+			return false
 		end
 	end
+	turtle.select(1)
 end
 
 function clsTurtle.drop(self, direction, slot, amount)
@@ -1057,7 +1107,7 @@ function clsTurtle.drop(self, direction, slot, amount)
 	else
 		success = drop(amount)
 	end
-	
+	turtle.select(1)
 	return success
 end
 
@@ -1078,7 +1128,7 @@ function clsTurtle.dropAll(self, direction)
 			end
 		end
 	end
-	
+	turtle.select(1)
 	return success
 end
 
@@ -1111,8 +1161,8 @@ function clsTurtle.dropItem(self, item, direction, keepAmount)
 			stockData = clsTurtle.getStock(self, item)
 		end
 	end
-	
-	return true
+	turtle.select(1)
+	return success
 end
 
 function clsTurtle.dumpRefuse(self, direction, keepCobbleStacks)
@@ -1222,11 +1272,11 @@ function clsTurtle.emptyTrash(self, direction)
 	local itemName = ""
 	local move = false
 	-- store these items permanently inside turtle
-	local keepItems = 	{"netherrack", "cobblestone", "chest", "torch", "ore", "bucket", "coal", "diamond", "debris", "deepslate","iron","gold","copper"}			
+	local keepItems = 	{"netherrack", "cobble", "chest", "torch", "ore", "bucket", "coal", "diamond", "debris", "deepslate","iron","gold","copper"}			
 	local keepit = false					
 	-- empty excess cobble, dirt, all gravel, unknown minerals
 	-- keep max of 1 stack
-	clsTurtle.sortInventory(self)
+	clsTurtle.sortInventory(self, false) -- do not use chest for sorting as may leave items behind
 	for i = 1, 16 do
 		keepit = false
 		if turtle.getItemCount(i) > 0 then
@@ -1245,7 +1295,7 @@ function clsTurtle.emptyTrash(self, direction)
 			end
 		end
 	end
-	clsTurtle.sortInventory(self)
+	clsTurtle.sortInventory(self, false)
 	clsTurtle.emptyTrashItem(self, direction, "minecraft:cobblestone", 192)
 	clsTurtle.emptyTrashItem(self, direction, "minecraft:netherrack", 192)
 	clsTurtle.emptyTrashItem(self, direction, "minecraft:cobbled_deepslate", 192)
@@ -1307,8 +1357,10 @@ function clsTurtle.fillVoid(self, direction, tblPreferredBlock, leaveExisting)
 	assert( leaveExisting == nil or type(leaveExisting) == "boolean", "leaveExisting is not boolean: "..tostring(leaveExisting))
 	
 	if tblPreferredBlock == nil or tblPreferredBlock == "" then tblPreferredBlock = {} end
-	if type(tblPreferredBlock) ~= "table" then tblPreferredBlock = {tblPreferredBlock} end
+	if type(tblPreferredBlock) ~= "table" then tblPreferredBlock = {tblPreferredBlock} end -- always use a table
 	if leaveExisting == nil then leaveExisting = true end
+	
+	
 	
 	local Detect = turtle.detect
 	local Place = turtle.place
@@ -1322,10 +1374,35 @@ function clsTurtle.fillVoid(self, direction, tblPreferredBlock, leaveExisting)
 		Place = turtle.placeDown
 		Dig = turtle.digDown
 	end
+	
+	
+	
+	local lib = {}
+	
+	function lib.place(direction, placeBlock, currentBlock, slot)
+		if placeBlock ~= currentBlock then -- current block does not match type to be used as filler
+			turtle.select(slot)
+			Dig()
+			local attempts = 0
+			while not Place() do
+				Dig()	-- added here in case of falling gravel etc.
+				attempts = attempts + 1
+				clsTurtle.attack(self)
+				print("Attacking: "..attempts.." / 5")
+				sleep(0.5)
+				if attempts == 5 then
+					break
+				end
+			end
+		end
+		turtle.select(1)
+		return true
+	end
+	
 	local placed = false
 	local noBlocks = false
 	local slot = 0
-	local block = ""
+	local placeBlock = ""
 	--check if vegetation and remove
 	if clsTurtle.isSeaweed(self, direction) then
 		Dig()
@@ -1333,10 +1410,25 @@ function clsTurtle.fillVoid(self, direction, tblPreferredBlock, leaveExisting)
 	if clsTurtle.isGravityBlock(self, direction) then
 		Dig()
 	end
-	-- make a table of all existing blocks
-	local stock = clsTurtle.getCurrentInventory(self)
 	
-	--[[ -- debugging
+	local continue = false
+	local currentBlock = clsTurtle.getBlockType(self, direction)
+	if currentBlock ~= "" then  	-- solid block already present
+		if 	currentBlock:find("gravel") == nil and
+			currentBlock:find("sand") == nil  and
+			currentBlock:find("water") == nil and
+			currentBlock:find("lava") == nil then -- not water, lava, sand or gravel
+			if leaveExisting then
+				turtle.select(1)
+				return true, false
+			end
+		end
+	end
+	
+	-- make a table of all existing blocks
+	local stock = clsTurtle.getCurrentInventory(self) -- eg stock[1] = minecraft:dirt, stock[2] = "", stock[3] = "minecraft:cobblestone"
+	
+	--[[ debugging
 	for k,v in pairs(tblPreferredBlock) do
 		print("k: "..k.." v: "..tostring(v))
 	end
@@ -1344,29 +1436,32 @@ function clsTurtle.fillVoid(self, direction, tblPreferredBlock, leaveExisting)
 	read()]]
 	
 	if next(tblPreferredBlock) ~= nil then -- check for preferredBlock
+		local found = false
 		for i = 1, 16 do
-			local continue = true
 			for k,v in pairs(tblPreferredBlock) do
-				if stock[i]:find(v) ~= nil then
+				if stock[i]:find(v) ~= nil then	-- eg stock[3] = "minecraft:cobblestone"
 					slot = i
-					continue = false
+					placeBlock = stock[i]
+					found = true
 					break
 				end
 			end
-			if not continue then
+			if found then -- block found
 				break
 			end
 		end
 	end
-	
-	if slot == 0 then --preferred block not found
+	-- print("using slot no "..slot) read()
+
+
+	if slot == 0 then -- no preferred block or not found
 		-- check for any stock of stone in order
 		local found = false
 		for i = 1, #stone do -- using 'stone' table (class variable)
 			for j = 1, 16 do
 				if stock[j] == stone[i] then
 					slot = j --slot no
-					block = stock[j]
+					placeBlock = stock[j]
 					found = true
 					break
 				end
@@ -1377,33 +1472,12 @@ function clsTurtle.fillVoid(self, direction, tblPreferredBlock, leaveExisting)
 		end
 	end
 	
-	if slot > 0 then
-		if not Detect() or not leaveExisting then -- fill void or replace existing block
-			local blockType = clsTurtle.getBlockType(self, direction)
-			if blockType:find("cobble") ~= nil then -- already cobble or cobbled deepslate
-				placed = true
-			else
-				if block ~= blockType then -- current block does not match type to be used as filler
-					turtle.select(slot)
-					Dig()
-					local attempts = 0
-					while not Place() do
-						attempts = attempts + 1
-						clsTurtle.attack(self)
-						print("Attacking: "..attempts.."/5")
-						sleep(1.5)
-						--[[if attempts > 5 then
-		print("Problem trying to place "..block.." "..direction)
-		error()					
-							return false, false
-						end]]
-					end
-				end
-			end
-			placed = true
-		end
-	else
+	if slot == 0 then -- no suitable block found
+	-- print("No blocks found") read()
 		noBlocks = true
+	else
+	-- print("Placing: "..placeBlock) read()
+		placed = lib.place(direction, placeBlock, currentBlock, slot)
 	end
 	
 	turtle.select(1)
@@ -1674,7 +1748,7 @@ function clsTurtle.getCurrentInventory(self)
 			stock[i] = data.name
 		end
 	end	
-	return stock
+	return stock -- eg stock[1] = minecraft:dirt, stock[2] = "", stock[3] = "minecraft:cobblestone"
 end
 
 function clsTurtle.getFirstEmptySlot(self)
@@ -2130,13 +2204,34 @@ function clsTurtle.getTotalItemCount(self)
 	return count
 end
 
+function clsTurtle.getWater(self, direction)
+	direction = direction or "forward"
+	-- assign place methods according to direction
+	local Place = turtle.place
+	if direction == "up" then
+		Place = turtle.placeUp
+	elseif direction == "down" then
+		Place = turtle.placeDown
+	end
+	local slot = clsTurtle.getItemSlot(self, "minecraft:bucket")
+	if slot > 0 then
+		turtle.select(slot)
+		if Place() then
+			turtle.select(1)
+			return true
+		end
+	end
+	turtle.select(1)
+	return false
+end
+
 function clsTurtle.go(self, path, useTorch, torchInterval, leaveExisting, preferredBlock)
 	useTorch = useTorch or false -- used in m and M to place torches in mines
 	if leaveExisting == nil then
 		leaveExisting = false
 	end
 	torchInterval = torchInterval or 8
-	if preferredBlock == nil then
+	if preferredBlock == nil or preferredBlock == "" then
 		preferredBlock = {} -- used for C command to allow faster placing of specific block
 	else
 		if type(preferredBlock) ~= "table" then
@@ -2248,8 +2343,23 @@ function clsTurtle.go(self, path, useTorch, torchInterval, leaveExisting, prefer
 			end
 		elseif move == "C" then
 			-- fillVoid(self, direction, tblPreferredBlock, leaveExisting)
-			clsTurtle.digValuable(self, direction[modifier + 1])
-			clsTurtle.fillVoid(self, direction[modifier + 1], preferredBlock, leaveExisting)
+			local fill = false
+			if leaveExisting then -- leave alone if non-gravity
+				if clsTurtle.detect(self, direction[modifier + 1]) then -- solid block ahead, not air, water or lava
+					if clsTurtle.digValuable(self, direction[modifier + 1]) then
+						fill = true
+					elseif clsTurtle.digGravityBlock(self, direction[modifier + 1]) then -- sand or gravel
+						fill = true
+					end
+				else	-- air, water or lava ahead
+					fill = true
+				end
+			else
+				fill = true
+			end
+			if fill then
+				clsTurtle.fillVoid(self, direction[modifier + 1], preferredBlock, false)
+			end
 		elseif move == "d" then -- down and place while not detect
 			if modifier == 1 then
 				clsTurtle.fillVoid(self, "forward", preferredBlock)
@@ -2682,6 +2792,7 @@ function clsTurtle.go(self, path, useTorch, torchInterval, leaveExisting, prefer
 		end
 	end
 	turtle.select(slot)
+	--turtle.select(1)
 end
 
 function clsTurtle.harvestTree(self, extend, craftChest, direction)
@@ -2915,18 +3026,9 @@ end
 
 function clsTurtle.isGravityBlock(self, direction)
 	--[[ look for sand, gravel, concrete powder ]]
-	local Detect = turtle.detect
-	local blockName
-	if direction == "up" then
-		Detect = turtle.detectUp
-	elseif direction == "down" then
-		Detect = turtle.detectDown
-	end
-	if Detect() then
-		blockName = clsTurtle.getBlockType(self, direction)
-		if blockName:find("sand") ~= nil or blockName:find("gravel") ~= nil then
-			return true
-		end
+	local blockName = clsTurtle.getBlockType(self, direction)
+	if blockName:find("sand") ~= nil or blockName:find("gravel") ~= nil then
+		return true
 	end
 	return false
 end
@@ -3059,6 +3161,7 @@ function clsTurtle.place(self, blockType, damageNo, direction, leaveExisting, si
 				if clsTurtle.getSlotContains(self, slot) == "minecraft:lava_bucket" then
 					clsTurtle.refuel(self, 0)
 				end
+				turtle.select(1)
 				return true, slot
 			end
 		end
@@ -3078,22 +3181,51 @@ function clsTurtle.place(self, blockType, damageNo, direction, leaveExisting, si
 		end
 		if doContinue then -- air / water or lava in next block or leaveExisting = false
 			while clsTurtle.dig(self, direction) do
-				sleep(0.3)
+				sleep(0.1)
 			end
 			if slot > 0 then -- item to place found
 				turtle.select(slot)
+				local attempts = 0
 				while not Place(signText) do
-					if not clsTurtle.attack(self) then
-						print("Error placing "..blockType.." ? chest or minecart below")
-						sleep(5)
+					if clsTurtle.attack(self) then
+						print("Attacking "..blockType.." ? chest or minecart below")
+						sleep(1)
 						--clsTurtle.saveToLog("Error placing "..blockType.." ? chest or minecart below")
+					end
+					attempts = attempts + 1
+					if attempts > 1 then
+						turtle.select(1)
+						return false, slot
 					end
 				end
 				success = true
 			end
 		end
 	end
+	turtle.select(1)
 	return success, slot
+end
+
+function clsTurtle.placeWater(self, direction)
+	direction = direction or "forward"
+	-- assign place methods according to direction
+	local Place = turtle.place
+	if direction == "up" then
+		Place = turtle.placeUp
+	elseif direction == "down" then
+		Place = turtle.placeDown
+	end
+	local slot = clsTurtle.getItemSlot(self, "minecraft:water_bucket")
+	if slot > 0 then
+		turtle.select(slot)
+		if Place() then
+			turtle.select(1)
+			return true
+		end
+	end
+	
+	turtle.select(1)
+	return false
 end
 
 function clsTurtle.refuel(self, minLevel, toLimitOnly)	
@@ -3298,7 +3430,8 @@ function clsTurtle.setEquipment(self)
 	return equippedRight, equippedLeft, inInventory
 end
 	
-function clsTurtle.sortInventory(self)
+function clsTurtle.sortInventory(self, useChest)
+	useChest = useChest or true
 	local lib = {}
 	
 	function lib.checkForStorage(self)
@@ -3328,9 +3461,12 @@ function clsTurtle.sortInventory(self)
 		--while clsTurtle.suck(self, chestDirection) do end -- remove everything
 	end
 	
-	local chestSlot = clsTurtle.getItemSlot(self, "minecraft:chest", -1) --get the slot number containing a chest
-	if chestSlot == 0 then
-		chestSlot = clsTurtle.getItemSlot(self, "minecraft:barrel", -1) --get the slot number containing a barrel
+	local chestSlot = 0
+	if useChest then
+		chestSlot = clsTurtle.getItemSlot(self, "minecraft:chest", -1) --get the slot number containing a chest
+		if chestSlot == 0 then
+			chestSlot = clsTurtle.getItemSlot(self, "minecraft:barrel", -1) --get the slot number containing a barrel
+		end
 	end
 	local blockType
 	local facing = self.facing
@@ -3358,10 +3494,12 @@ function clsTurtle.sortInventory(self)
 			clsTurtle.turnLeft(self, turns)
 		end
 	else
-		chestDirection = lib.checkForStorage(self)
-		if chestDirection ~= "" then
-			chestPlaced = true
-			lib.chestSort(self, chestDirection)
+		if useChest then -- false eg in mining, where storage chest may be full, and essential items not retrieved
+			chestDirection = lib.checkForStorage(self)
+			if chestDirection ~= "" then
+				chestPlaced = true
+				lib.chestSort(self, chestDirection)
+			end
 		end
 	end
 	if not chestPlaced then	-- no chest or unable to place it
@@ -3410,6 +3548,7 @@ function clsTurtle.suck(self, direction, slot, quantity)
 	else
 		success, msg = Suck(quantity)
 	end
+	turtle.select(1)
 	return success, msg
 end
 
