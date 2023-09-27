@@ -1,4 +1,6 @@
-version = 20230804.1000
+version = 20230927.1400
+
+local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
 	**********Toolkit v2**********
 	https://pastebin.com/UFvjc1bw
@@ -20,13 +22,84 @@ mc 1.18 has new blocks and bedrock at -64, so needs to be taken into account.
 _HOST = The ComputerCraft and Minecraft version of the current computer environment.
 For example, ComputerCraft 1.93.0 (Minecraft 1.15.2).
 ]]
+local dbug = false -- debug is reserved word
 local bedrock = 0
+local netherBedrock = 0
 local ceiling = 255
 local deletesWater = false
 local brick = "minecraft:nether_brick" -- pre 1.16+ name
-local mcMajorVersion = tonumber(_HOST:sub(_HOST:find("Minecraft") + 10, _HOST:find("\)") - 1)) -- eg 1.18 or 1.20 -> 1.18, 1.20
+local ccMajorVersion = _HOST:sub(15, _HOST:find("Minecraft") - 2) --eg ComputerCraft 1.93.0 (Minecraft 1.15.2)
+local ccMinorVersion = 0
+--[[
+Netherite level stand on 14
+Chunk borders F3+G or:
+math.floor(x / 16) * 16 add 16 for each border. same for z
+]]
+function string:split(sSeparator, nMax, bRegexp, noEmpty)
+	--[[return a table split with sSeparator. noEmpty removes empty elements
+		use: tblSplit = SplitTest:split('~',[nil], [nil], false) or tblSplit = string.split(SplitTest, '~')]]   
+	assert(sSeparator ~= '','separator must not be empty string')
+	assert(nMax == nil or nMax >= 1, 'nMax must be >= 1 and not nil')
+	if noEmpty == nil then noEmpty = true end
+
+	local aRecord = {}
+	local newRecord = {}
+	-- self refers to the 'string' being split
+	if self:len() > 0 then
+		local bPlain = not bRegexp
+		nMax = nMax or -1
+
+		local nField, nStart = 1, 1
+		local nFirst,nLast = self:find(sSeparator, nStart, bPlain)
+		while nFirst and nMax ~= 0 do
+			aRecord[nField] = self:sub(nStart, nFirst-1)
+			nField = nField+1
+			nStart = nLast+1
+			nFirst,nLast = self:find(sSeparator, nStart, bPlain)
+			nMax = nMax-1
+		end
+		aRecord[nField] = self:sub(nStart)
+		
+		if noEmpty then --split on newline preserves empty values
+			for i = 1, #aRecord do
+				if aRecord[i] ~= "" then
+					table.insert(newRecord, aRecord[i])
+				end
+			end
+		else
+			newRecord = aRecord
+		end
+	end
+	
+	return newRecord
+end
+
+if tonumber(ccMajorVersion) == nil then -- 1.93.0 NAN
+	--ccMajorVersion = ccMajorVersion:sub(1, ccMajorVersion:find(".", 3, true) - 1)
+	local parts = ccMajorVersion:split(".")
+	ccMajorVersion = parts[1]
+	if parts[2] ~= nil then
+		ccMajorVersion = ccMajorVersion.."."..parts[2]
+	end
+	ccMajorVersion = tonumber(ccMajorVersion)
+	if parts[3] ~= nil then
+		ccMinorVersion = tonumber(parts[3])
+	end
+end
+
+local mcMajorVersion = _HOST:sub(_HOST:find("Minecraft") + 10, _HOST:find("\)") - 1) -- eg 1.18 or 1.20 -> 1.18, 1.20
+local mcMinorVersion = 0
 if tonumber(mcMajorVersion) == nil then -- 1.18.3 NAN
-	mcMajorVersion = tonumber(_HOST:sub(_HOST:find("Minecraft") + 10, _HOST:find("\)") - 3)) -- eg 1.19.4 -> 1.19
+	--mcMajorVersion = tonumber(_HOST:sub(_HOST:find("Minecraft") + 10, _HOST:find("\)") - 3)) -- eg 1.19.4 -> 1.19
+	local parts = mcMajorVersion:split(".")
+	mcMajorVersion = parts[1]
+	if parts[2] ~= nil then
+		mcMajorVersion = mcMajorVersion.."."..parts[2]
+	end
+	mcMajorVersion = tonumber(mcMajorVersion)
+	if parts[3] ~= nil then
+		mcMinorVersion = tonumber(parts[3])
+	end
 end
 
 if mcMajorVersion < 1.7  and mcMajorVersion >= 1.18 then -- 1.12 to 1.??
@@ -41,6 +114,18 @@ if mcMajorVersion < 1.7  and mcMajorVersion <= 1.12 then --- turtle in source de
 end
 
 local utils = {}
+
+function utils.tableConcat(tbl, sep)
+    local output = ""
+    for i,value in pairs(tbl) do
+        output = output .. tostring(value)
+        if i ~= #tbl then
+            output = output .. sep
+        end
+    end
+
+    return output
+end
 
 function utils.calculateDimensions(R)
 	if R.data == "" then -- not being called from other functions
@@ -59,7 +144,7 @@ function utils.calculateDimensions(R)
 	return R
 end
 
-function utils.calculateDistance(estDistance)
+function utils.calculateDistance(estDistamcMajorVersionnce)
 	--[[
 	measure length
 	movement stops when either solid block in front or solid below
@@ -123,39 +208,167 @@ end
 function utils.createPath(R) -- 51
 	--[[places a path in air/lava/water. R can also be of type int]]
 	local length = 0
+	local reduce = false
+	local torchInterval = 8
 	if type(R) == "table" then
 		length = R.length
+		if R.data == "reduce" then
+			reduce = true
+		end
+		torchInterval = R.torchInterval
 	else
 		length = R
 	end
 	local numBlocks = 0
-	local continue = true
-	for i = 1, 2 do
-		T:fillVoid("down", {}, false)
+	
+	if reduce then
 		T:forward(1)
-		numBlocks = numBlocks + 1
-	end
-	local place = utils.clearVegetation("down")
-	while place do -- while air, water, normal ice, bubble column or lava below
-		if T:fillVoid("down", {}, false) then -- false if out of blocks
+		local blockType = T:getBlockType("down")
+		local useBlock = blockType
+		while blockType == useBlock do
+			T:go("x2F1")
+			numBlocks = numBlocks + 1
+			blockType = T:getBlockType("down")
+		end
+		utils.goBack(numBlocks + 1)
+	else
+		for i = 1, 2 do
+			T:fillVoid("down", {}, false)
 			T:forward(1)
 			numBlocks = numBlocks + 1
-			if numBlocks % 8 == 0 then
-				if T:getItemSlot("minecraft:torch", -1) > 0 then
-					T:turnRight(2)
-					T:place("minecraft:torch", -1, "forward", false)
-					T:turnRight(2)
+		end
+		local place = utils.clearVegetation("down")
+		while place do -- while air, water, normal ice, bubble column or lava below
+			if T:fillVoid("down", {}, false) then -- false if out of blocks
+				T:forward(1)
+				numBlocks = numBlocks + 1
+				if numBlocks % torchInterval == 1 or numBlocks == 0 then
+					if T:getItemSlot("minecraft:torch", -1) > 0 then
+						T:turnRight(2)
+						T:place("minecraft:torch", -1, "forward", false)
+						T:turnRight(2)
+					end
 				end
+			else
+				break
 			end
-		else
-			break
+			if length > 0 and numBlocks >= length then -- not infinite path (length = 0)
+				break
+			end
+			place = utils.clearVegetation("down")
 		end
-		if length > 0 and numBlocks >= length then -- not infinite path (length = 0)
-			break
-		end
-		place = utils.clearVegetation("down")
 	end
 	return {numBlocks} -- returned as a table in case called as task 51 back to main()
+end
+
+function utils.createWalledSpace(D)
+	--[[
+	D.width  = #
+	D.length = #
+	D.height = #
+	D.ceiling = false
+	D.floor = false
+	D.vDirection = "U" or "D"
+	D.hDirection = "LR" or "RL"
+	D.goHome = true
+	T:go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
+	]]
+	local turn  = "R1"
+	local oTurn = "L1"
+	if D.hDirection == "RL" then
+		turn    = "L1"
+		oTurn   = "R1"
+	end
+	local placeF = "C1"
+
+	local lib = {}
+	
+	function lib.getPlace(D, start, finish)
+		if start then						-- start of build
+			if D.vDirection == "U" then 	-- bottom and going up
+				if D.floor then
+					return "C2"
+				end
+			else							-- D.vDirection == "D"
+				if D.ceiling then
+					return "C0"
+				end
+			end
+		elseif finish then					-- end of build
+			if D.vDirection == "U" then 	-- bottom and going up
+				if D.ceiling then
+					return "C0"
+				end
+			else
+				if D.floor then
+					return "C2"
+				end
+			end
+		end
+
+		return ""							-- start and finish both false
+	end
+	
+	function lib.layer(D, start, finish)
+		local outward = true
+		local place = lib.getPlace(D, start, finish)
+		for width = 1, D.width do
+			for length = 1, D.length do
+				if start or finish then
+					T:go(place, false, 0, true)-- place floor / ceiling
+				end
+				if width == 1 then
+					T:go(oTurn..placeF..turn, false, 0, true)		-- face wall and check if block
+				elseif width == D.width then						-- checking opposite wall
+					if outward then									-- travelling away from start
+						T:go(turn..placeF..oTurn, false, 0, true)	-- face wall and check if block
+					else											-- travelling towards start
+						T:go(oTurn..placeF..turn, false, 0, true)	-- face wall and check if block 
+					end					
+				end
+				-- move forward
+				if length < D.length then
+					T:forward(1)
+				end
+			end
+			if width < D.width then
+				-- change direction
+				if outward then
+					T:go(placeF..turn.."F1"..oTurn..place..placeF..turn..turn, false, 0, true)
+				else
+					T:go(placeF..oTurn.."F1"..turn..place..placeF..oTurn..oTurn, false, 0, true)
+				end
+				outward = not outward
+			else
+				if outward then
+					T:go(placeF..oTurn.."F"..D.width -1 ..oTurn.."F"..D.length - 1 .."C1R2", false, 0, true)
+				else
+					T:go(placeF..turn.."F"..D.width -1 ..oTurn..placeF..turn..turn, false, 0, true)
+				end
+			end
+		end
+	end
+	
+	T:go("R2"..placeF.."R2", false, 0, true)			-- place block behind
+	for height = 1, D.height do
+		if height == 1 then
+			lib.layer(D, true, false)					-- first layer, so start = true, finish = false
+		elseif height == D.height then		
+			lib.layer(D, false, true)					-- final layer, so start = false, finish = true
+		else
+			lib.layer(D, false, false)					-- mid build layer, so start = false, finish = false
+		end
+		if height < D.height then						-- go up or down unless finished build
+			T:go(D.vDirection.."1")
+		end
+	end
+	if D.goHome then-- ends at starting point
+		if D.vDirection == "U" then
+			T:down(D.height - 1)
+		else
+			T:up(D.height - 1)
+		end
+	end
 end
 
 function utils.createWaterSource(level)
@@ -173,13 +386,13 @@ function utils.createWaterSource(level)
 	T:go("C2F1R1 C2F1R1 C2F1R1 C2F1R1", false, 0, false)
 	T:go("U1")
 	for i = 1, 2 do
-		T:place("minecraft:water_bucket", -1, "down", false)
+		T:placeWater("down")
 		T:go("F1R1F1R1", false, 0, false)
 	end
 	-- refill water buckets
 	for i = 1, 2 do
 		sleep(0.5)
-		T:place("minecraft:bucket", -1, "down", false)
+		T:placeWater("down")
 	end
 	T:go("R2F1R1F1R1")
 	-- end above lower left of pond (starting point)
@@ -459,7 +672,7 @@ function utils.startWaterFunction(inWater, onWater, maxDescent, goIn)
 end
 
 function utils.fillBucket(direction)
-	if T:place("minecraft:bucket", -1, direction, true) then
+	if T:getWater(direction)  then
 		sleep(0.3)
 		return true
 	else
@@ -495,16 +708,16 @@ end
 
 function utils.getWater()
 	if deletesWater then
-		T:place("minecraft:bucket", -1, "down") -- take water from source
+		T:getWater("down") -- take water from source
 		sleep(0.2)
-		T:place("minecraft:bucket", -1, "down") -- take water from source
+		T:getWater("down") -- take water from source
 	else
 		if not turtle.detectDown() then
 			T:go("C2", false, 0, false)
 		end
-		T:place("minecraft:bucket", -1, "forward") -- take water from source
+		T:getWater("forward") -- take water from source
 		sleep(0.2)
-		T:place("minecraft:bucket", -1, "forward") -- take water from source
+		T:getWater("forward") -- take water from source
 	end
 end
 
@@ -560,68 +773,6 @@ function utils.getPrettyPrint(promptColour, menuPromptColour)
 	return pp
 end
 
-function utils.initialiseCanal(R)
-	-- return moves
-	local moves = 1
-	local oTurn = "R"
-	if R.side == "R" then
-		oTurn = "L"
-	end
-	local newCanal, isWater, isSource = false, false, false
-	if (R.subChoice == 1 or R.subChoice == 4) and R.data == 1 then 	-- left / right side on towpath stays in place for 4 part canal
-		if deletesWater then
-			T:go(oTurn.."1F1")						-- turn to face canal centre, go forward over water
-			isWater, isSource = T:isWater("down")
-			if isSource then 						-- canal already exists
-				T:go(oTurn.."1")					-- stay above water, face existing canal
-			else									-- NOT above source
-				T:go("D1"..oTurn.."1")				-- go to canal floor, face existing
-				newCanal = true						-- flag create 6 water source blocks
-			end
-		else										-- NOT deletesWater
-			T:go(oTurn.."1F1D1"..oTurn.."1") 		-- move into canal, face back along any existing canal
-			isWater, isSource = T:isWater("forward")
-			if isSource then
-				T:go(R.side.."2") 					-- face forward for new canal
-			else
-				newCanal = true
-			end
-		end
-	elseif R.subChoice == 2 or R.subChoice == 3 then-- left / right side above canal finishing pos if deletesWater
-		if deletesWater then
-			isWater, isSource = T:isWater("down")
-			if isSource then 
-				T:go(R.side.."2")					-- face towards existing canal
-			else
-				T:go("D1"..R.side.."2")				-- go down and face existing canal		 				-- no water ahead
-				newCanal = true						-- already in newCanal starting position
-			end
-		else										-- NOT deletesWater
-			T:go("D1"..R.side.."2")					-- facing existing on canal floor
-			isWater, isSource = T:isWater("forward")
-			if isSource then						-- water ahead
-				T:go(R.side.."2")					-- face forward for new canal
-			else 									
-				newCanal = true
-			end
-		end
-	elseif R.subChoice == 5 or R.subChoice == 6 then -- left / right  side in canal base. Assume NOT deletesWater
-		T:go(R.side.."2") 							-- check if water behind	
-		isWater, isSource = T:isWater("forward")
-		if isSource then
-			T:go(oTurn.."2") 	
-		else
-			newCanal = true
-		end
-	end
-	if newCanal then 								-- no water ahead, facing start wall of new canal *|<| | |
-		utils.newCanal(R) 							-- start new canal, finish facing new canal 6 block water sources
-		moves = 2
-	end
-	
-	return moves 									-- facing forward ready for new canal *|>| | |
-end
-
 function utils.move(R, blocks, reverse)
 	if reverse == nil then
 		reverse = false
@@ -641,64 +792,6 @@ function utils.move(R, blocks, reverse)
 		end
 		return blocks
 	end
-end
-
-function utils.newCanal(R)
-	--  no source in front as this function called
-	local lib = {}
-	
-	function lib.newCanalSide(oTurn)
-		T:go("C1 U1x1 U1x1 D2"..oTurn.."1", false, 0, false)
-	end
-	
-	function lib.newCanalBase(R)
-		local oTurn = "R"								-- assume R.side = "L"
-		if R.side == "R" then
-			oTurn = "L"
-		end
-		if not turtle.detectDown() then					-- air / water below: fill floor
-			T:go(oTurn.."1D1")							-- *|>| | | to *|V| | | turn towards canal centre, go down ready to repair neighbouring canal base 
-			if T:getBlockType("forward"):find("turtle") ~= nil then -- turtle in similar position
-				if R.side == "L" then					-- only left side repairs, so wait 1 second
-					sleep(1)
-					T:go("C1")							-- repair neighbouring canal base
-				end
-			else
-				T:go("C1")								-- repair neighbouring canal base
-			end
-			T:go(R.side.."1")							-- *|V| | | to *|>| | | turn to face start 
-			T:up(1)										-- *|>| | | return to canal floor 
-		end
-		T:go("C2", false, 0, false)
-	end
-	
-														-- *|<| | |  facing end wall ready for new canal canal base level
-	local oTurn = "R"									-- assume R.side = "L"
-	if R.side == "R" then
-		oTurn = "L"
-	end
-	lib.newCanalSide(oTurn)								-- *|<| | | wall fixed. to -- *|^| | | 
-	lib.newCanalSide(oTurn)								-- *|^| | | wall fixed. to -- *|>| | | 
-	lib.newCanalBase(R)									-- *|>| | | base fixed
-	T:go("F1"..R.side.."1") 							-- *|>| | | to *| |>| | to *| |^| |
-	lib.newCanalSide(oTurn)								-- *| |^| | to *| |>| |
-	lib.newCanalBase(R)									-- *| |>| | base fixed
-	T:go("F1"..R.side.."1") 							-- *| |>| | to *| | |>| to *| | |^|
-	lib.newCanalSide(oTurn)								-- *| | |^| to *| | |>|
-	lib.newCanalBase(R)									-- *| | |>| base fixed
-	T:go(R.side.."2") 									-- *| | |>| to *| | |<|facing existing / back wall 
-	T:forward(1)										-- *| |<| |
-	T:place("minecraft:water_bucket", -1, "forward") 	-- *|W|<| | placed against start wall  
-	T:go("L2")											-- *|W|>| |
-	T:place("minecraft:water_bucket", -1, "forward") 	-- *|W|>|W| placed direction of travel 
-	T:go("R2") 											-- *|W|<|W| rotate
-	if deletesWater then
-		T:up(1)
-	else
-		sleep(0.2)
-	end
-	utils.getWater()									-- *|W|<|W| 
-	T:go(oTurn.."2F1")									-- *|W|<|W|  to *|W|W|>|  ready to go	
 end
 
 function utils.setStorageOptions()
@@ -1318,10 +1411,7 @@ local function clearAndReplantTrees() -- 25
 	return {}
 end
 
-local function clearArea(R, useDirt) -- 71, called from 22
-	if useDirt == nil then
-		useDirt = true
-	end
+local function clearArea(R) -- 71, called from 22
 	local evenWidth = false
 	local evenHeight = false
 	local loopWidth
@@ -1343,7 +1433,7 @@ local function clearArea(R, useDirt) -- 71, called from 22
 	for x = 1, loopWidth do
 		-- Clear first column (up)
 		for y = 1, R.length do
-			if useDirt then
+			if R.useBlockType == "dirt" then
 				if not turtle.detectDown() then
 					T:place("minecraft:dirt", -1, "down", true)
 				else --if not water, dirt, grass , stone then replace with dirt
@@ -1364,7 +1454,7 @@ local function clearArea(R, useDirt) -- 71, called from 22
 		if x < loopWidth or (x == loopWidth and evenWidth) then -- go down if on R.width 2,4,6,8 etc
 			T:go("R1F1+1R1", false,0,false)
 			for y = 1, R.length do
-				if useDirt then
+				if R.useBlockType == "dirt" then
 					if not turtle.detectDown() then
 						T:place("minecraft:dirt", -1, "down", true)
 					else
@@ -1693,16 +1783,17 @@ local function clearBuilding(R) -- 75, 43
 	return {}
 end
 
-local function clearMineshaft(equippedRight, equippedLeft, inInventory) -- 19
+local function clearMineshaft(R, equippedRight, equippedLeft, inInventory) -- 19
 	local lib = {}
 	
 	function lib.checkCobweb(directions, inInventory)
 		assert(type(directions) == "table", "directions must be a table eg {'up','down'}")
 		for _, direction in ipairs(directions) do
+			local blockType = T:getBlockType(direction)
 			if inInventory == "minecraft:diamond_sword" then -- using a sword
 				local side = "left"
-				local item = T:getBlockType(direction)
-				if item == "minecraft:cobweb" then
+				
+				if blockType:find("cobweb") ~= nil then
 					--clsTurtle.equip(self, side, useItem, useDamage)
 					if equippedRight == "minecraft:diamond_pickaxe" then
 						side = "right"
@@ -1710,7 +1801,7 @@ local function clearMineshaft(equippedRight, equippedLeft, inInventory) -- 19
 					T:equip(side, "minecraft:diamond_sword")
 					T:dig(direction)
 					T:equip(side, "minecraft:diamond_pickaxe")
-				else
+				elseif blockType ~= "" then
 					T:dig(direction)
 				end
 			else
@@ -1736,7 +1827,7 @@ local function clearMineshaft(equippedRight, equippedLeft, inInventory) -- 19
 		lib.checkCobweb({"up","down"}, inInventory) -- dig cobweb or any other block up/down
 		length = length + 1
 		torch = torch + 1
-		if torch == 8 then
+		if torch == R.torchInterval then
 			torch = 0
 			T:place("minecraft:torch", -1, "down", false) ---(self, blockType, damageNo, direction, leaveExisting, signText)
 		end
@@ -2102,80 +2193,260 @@ local function clearWaterPlants(R) -- 87
 end
 
 local function clearMountainSide(R) -- 78
+	--[[
+	First row              outward  l  s  f  mid    (length, start, finish, midPoint)
+
+	      >|*|*|           true                     lib.clearRow() moves: 7-5=2, midPoint starts at 2 
+	      +|*|*|
+	      +|*|*|
+	      ^|*|*|        <  false    7  5  6  2      lib.clearRow() moves: 9-2=7, midPoint starts at -4 -1 = -5
+	       |*|*|*|	    +
+	     |*|*|*|*|*|    +
+	  >  |*|*|*|*|*|    ^  true     9  2  6  -4     lib.getStartingLength(). Ends 1 block after block finish
+	  ^|*|*|*|*|*|*|*|*|                            starts here, moves up 1
+	    1 2 3 4 5 6 7 8                             block index
+		 
+	Second row                outward l  s  f  mid
+	             <            false
+                 +
+          |*|*|  +
+	   >|*|*|*|*|^            true
+	   +|*|*|*|*|
+	   +|*|*|*|*|
+	   ^|*|*|*|*|          <  false   6  5  6  2
+	    |*|*|*|*|*|*|      +
+	  |*|*|*|*|*|*|*|*|    +
+	  |*|*|*|>|*|*|*|*|    ^  true    7+5   5 -7    lib.getHalf(R); goBack(7) 
+	|*|*|*|*|*|*|*|*|*|*|*|                           starts at midPoint of previous row eg block 4
+	 0 1 2 3 4 5 6 7 8 9 10
+	]]
+	
+	-- variables declared before lib for them to be used within lib as part of scope
+	local turn = "R"
+	local oTurn = "L"
+	if R.subChoice == 1 then 	-- remove left side
+		turn = "L"
+		oTurn = "R"
+	end
+	local outward = true		-- direction flag
+	
 	local lib = {}
 	
-	function lib.excavate(blocksFromOrigin, going, length, digDown)
-		local firstUp = 0
-		for i = 1, length do
-			-- record first block dug above
-			if turtle.digUp() then
-				if firstUp == 0 then
-					firstUp = i -- will record first successful dig up
+	function lib.isAnyAbove(above)
+		for k,v in ipairs(above) do
+			if v then
+				return true
+			end
+		end
+		return false
+	end
+		
+	function lib.clearLevel(R, above)	-- eg 9, 2, 6, -4 from lib.getStartingLength OR 7, 5, 6, 3 from previous
+		-- clearLevel always follows either lib.getStartingLength or a previous lib.clearLevel
+		-- midPoint should be adjusted as turtle moves to reflect current row length
+		if #above == 0 then return above, 1 end
+		local index = 0
+		local minMoves = math.floor(#above / 2)
+		local up, forward, down = lib.getDetect()
+		if outward then										-- follow table indexes
+			for x = 1, minMoves do							-- clear first half
+				above[x] = up								-- reset this with new value
+				T:go("x0x2F1")								-- clear and move forward
+				up, forward, down = lib.getDetect()
+				index = index + 1
+			end
+			for x = minMoves + 1, #above do					-- check remaing half and clear
+				if above[x] then							-- is a block recorded as present?(now below)
+					above[x] = up							-- reset this with new value
+					T:go("x0x2F1")							-- clear and move forward
+					up, forward, down = lib.getDetect()
+					index = index + 1
+				else
+					break
 				end
 			end
-			if digDown then
-				turtle.digDown()
+		else												-- iterate table in reverse
+			index = #above
+			for x = #above, minMoves, -1 do					-- clear first half
+				above[x] = up								-- reset this with new value
+				T:go("x0x2F1")								-- clear and move forward
+				up, forward, down = lib.getDetect()
+				index = index - 1
 			end
-			T:forward(1)
-			if going then
-				blocksFromOrigin = blocksFromOrigin + 1
-			else
-				blocksFromOrigin = blocksFromOrigin - 1
+			for x = minMoves, 1, -1 do						-- check remaing half and clear
+				if above[x] then							-- is a block recorded as present?(now below)
+					above[x] = up							-- reset this with new value
+					T:go("x0x2F1")							-- clear and move forward
+					up, forward, down = lib.getDetect()
+					index = index - 1
+				else
+					break
+				end
 			end
 		end
-		
-		return blocksFromOrigin, firstUp
+		T:go("R2x0x2")										-- face opposite direction, delete blocks above and below
+		outward = not outward								-- switch direction flag
+		return above, index									-- eg {false, true, true, true, false}, 5
 	end
 	
-	function lib.cutSection(blocksFromOrigin, going, length, firstUp)
-		local height = 0
-		local digDown = false
-		blocksFromOrigin, firstUp = lib.excavate(blocksFromOrigin, going, length, digDown)
-		-- while at least 1 block dug above do
-		while firstUp > 0 do
-			if digDown then
-				turtle.digDown()
-			else
-				digDown = true
+	function lib.getDetect()
+		return turtle.detectUp(),  turtle.detect(),  turtle.detectDown()
+	end
+	
+	function lib.getStartingLength(R)
+		--[[
+			length of column by excavating blocks above, ahead or below
+			Rotate 180 at end of run ready to return
+			already 1 block above ground
+		]]
+		local above = {}									-- empty table of boolean values
+		local length = 0									-- used as counter							
+		T:forward(1)										-- start check 1 block ahead
+		local up, forward, down = lib.getDetect() 			-- check if anything around current block
+		if up or forward or down then						-- block found nearby: continue
+			while up or forward or down do					-- while blocks ahead / up / down move forward
+				table.insert(above, up)
+				T:go("x0x2F1")
+				up, forward, down = lib.getDetect() 		-- check if anything around current block
+				length = length + 1
+				if length >= R.length then					-- check if going out of range
+					T:saveToLog("lib.getStartingLength(R) : outward = "..tostring(outward).." MaxLength "..maxLength.." reached", false)
+					break
+				end
 			end
-			T:go("R2U1x1U1x1U1x1x0") -- go up 3 turn round
-			going = not going
+			T:go("R2x0x2")									-- Rotate 180 and clear blocks above/below
+		else												-- no blocks nearby: exit
+			T:go("R2F1")									-- return to start position rotated 180
+		end
+		outward = not outward
+
+		return above 										-- above = {false, true, true, true, true, false, false}
+	end
+	
+	function lib.firstRow(R)
+		local height = 1									-- starts at ground level, but forced up 1
+		T:up(1)
+		local above = lib.getStartingLength(R)				-- clear the ground level and 1 above eg 9, 2, 5, 4
+		if T:saveToLog("startLength: "..#above, true) then
+			T:saveToLog(utils.tableConcat(above, ", "), false)
+			if dbug then read() end
+		end													-- at end of first row as already turned 180, outward set to false in getStartingLength
+		while lib.isAnyAbove(above) do
+			T:go("U3")	-- go up 3
 			height = height + 3
-			if firstUp > 1 then
-				length = length - firstUp + 1
+			above, index = lib.clearLevel(R, above, index)	-- returns start and finish of blocks above, rotates 180
+			if T:saveToLog("checking level: "..height, true) then
+				T:saveToLog(utils.tableConcat(above, ", "), false)
+				if dbug then read() end
 			end
-			-- go forward R.length digging up/down
-			blocksFromOrigin, firstUp = lib.excavate(blocksFromOrigin, going, length,  true)
-		end
-		T:down(height)
+		end													-- first row all levels completed. 
+		T:down(height)										-- now on ground + 1, facing last column cleared.
 		
-		return blocksFromOrigin, going
+		return above
+	end
+		
+	function lib.deepCopy(tbl)
+		local copy = {}
+		for key, value in ipairs(tbl) do
+			table.insert(copy, value)
+		end
+		return copy
+	end
+   
+	function lib.getHalf(R, above)
+		-- already 1 block above ground
+		local maxLength = R.length
+		local temp = {}
+		local retValue = {}
+		if #above > 0 then								-- not empty table, so must be second half
+			temp = lib.deepCopy(above)					-- copy existing table
+			above = {}									-- initialise above
+		end
+		local up, forward, down = lib.getDetect()
+		
+		while up or forward or down do					-- while blocks ahead / up / down move forward
+			T:go("x0x2F1")
+			table.insert(above, up)
+			up, forward, down = lib.getDetect() 		-- check if anything around current block
+			
+			if #above >= math.floor(maxLength / 2) then	-- check if going out of range
+				T:saveToLog("lib.getHalf(R) : outward = "..tostring(outward).." MaxLength "..maxLength.." reached", false)
+				T:go("x0x2")
+				break
+			end
+		end
+		T:turnRight(2)									-- ready for next half or return
+		outward = not outward
+		if #temp > 0 then								-- completing a second half measurement
+			for i = #above, 1, -1 do
+				table.insert(retValue, above[i])		-- combine 2 tables into 1
+			end
+			for i = 1, #temp do
+				table.insert(retValue, temp[i])
+			end
+		else
+			retValue = above
+		end
+		return retValue
 	end
 	
-	local originalLength = R.length
-	local going = true
-	local firstUp = 0
-	local blocksFromOrigin = 0
-	--T:forward(1) -- get into position
-	blocksFromOrigin, going = lib.cutSection(blocksFromOrigin, going, R.length, firstUp)
-	if R.width > 1 then --move left/right and repeat
-		for i = 2, R.width do
-			if going then
-				T:turnRight(2)			
-			end
-			if blocksFromOrigin > 0 then
-				T:forward(blocksFromOrigin)
-			end
-			T:turnRight(2)
-			blocksFromOrigin = 0
-			if R.subChoice == 0 then --Left <- Right
-				T:go("L1F1R1")
-			else
-				T:go("R1F1L1")
-			end
-			going = true
-			blocksFromOrigin, going = lib.cutSection(blocksFromOrigin, going, R.length, firstUp)
+	function lib.nextRow(R)
+		local height = 1
+		T:saveToLog("lib.nextRow(R)", false)
+		T:up(1)
+		local pattern = turn.."1F1"..turn.."1"
+		if not outward then
+			pattern = oTurn.."1F1"..oTurn.."1"
 		end
+		T:go(pattern)
+		T:saveToLog("    T:go("..pattern..")", false)
+		outward = not outward -- reverse direction flag
+		-- now in next vertical row
+		local above = lib.getHalf(R, {})
+		local index = 0
+		if T:saveToLog("\t  first half Length: "..#above.." Enter", true) and dbug then read() end
+		lib.returnToMidPoint(#above)								-- return to starting point
+		above = lib.getHalf(R, above)		-- returns length - 1 eg 5, 4
+		local midPoint = math.floor(#above / 2)
+		if T:saveToLog("\t  total length: "..#above.." Enter", true) and dbug then read() end
+
+		while lib.isAnyAbove(above) do
+			T:go("U3")				-- go up 3
+			height = height + 3		-- increment height
+			T:saveToLog("\tClear height loop: height = "..height, false)
+			above, index = lib.clearLevel(R, above)	-- returns start and finish of blocks above
+		end
+		T:down(height)	-- now on ground + 1
+		lib.returnToMidPoint(above)
+	end
+	
+	function lib.returnToMidPoint(above)
+		--[[ value can be integer or table]]
+		if type(above) == "table" then
+			T:saveToLog("lib.returnToMidPoint("..#above..")", false)
+			
+			if #above > 0 then
+				local midPoint = math.floor(#above / 2)
+				T:saveToLog("    T:forward("..midPoint..")", false)
+				T:forward(midPoint)
+			end
+		else
+			T:saveToLog("lib.returnToMidPoint("..above..")", false)
+			if above > 0 then
+				T:saveToLog("    T:forward("..above..")", false)
+				T:forward(above)
+			end
+		end
+		-- now back at starting point
+	end
+	
+	-- Start here
+	-- if "tk log d.." typed instead of "tk" will start logfile and display comments. read() will be activated for debugging
+	T:saveToLog("Starting function clearMountainSide", false)
+	local above = lib.firstRow(R) 			-- outward depends on height eg 1-2 = false, 3-5 = true, 6-8 = false
+	lib.returnToMidPoint(above)				-- return to mid first row of blocks
+	for row = 1, R.width -1 do
+		lib.nextRow(R)
 	end
 	
 	return {}
@@ -2596,7 +2867,7 @@ local function convertWater(R) -- 88
 		-- place sources alternate positions + start and finish
 		while moves < length do
 			if place then
-				if T:place("minecraft:water_bucket", -1, "up") then
+				if T:placeWater("up") then
 					print("Placed source up")
 					waterBuckets = waterBuckets - 1
 				end
@@ -2613,7 +2884,7 @@ local function convertWater(R) -- 88
 				T:place("slab", -1, "down", false)
 			end
 		end
-		if T:place("minecraft:water_bucket", -1, "up") then -- end of length
+		if T:placeWater("up") then -- end of length
 			print("Placed final source up")
 		end
 		return place
@@ -2691,9 +2962,9 @@ local function createBoatLift(R) -- 59 state:0=new, size:1=extend, side:0=left, 
 		if downToWater > 0 then
 			T:down(downToWater)
 		end
-		T:place("minecraft:bucket", -1, "down") -- take water from source
+		T:getWater("down") -- take water from source
 		sleep(0.2)
-		T:place("minecraft:bucket", -1, "down") -- take water from source
+		T:getWater("down") -- take water from source
 		if downToWater > 0 then
 			T:up(downToWater)
 		end
@@ -2705,7 +2976,7 @@ local function createBoatLift(R) -- 59 state:0=new, size:1=extend, side:0=left, 
 	--T:place(blockType, damageNo, direction, leaveExisting, signText)
 	
 	local backToWater = 0
-	local downToWater = 
+	local downToWater = 0
 	
 	T:go("R1F1L1") 										-- over canal facing forward
 	for h = 1, R.height do
@@ -2717,11 +2988,11 @@ local function createBoatLift(R) -- 59 state:0=new, size:1=extend, side:0=left, 
 		T:place("soul", -1, "down", false) 				-- place soulsand down
 		T:place("soul", -1, "forward", false) 			-- place soulsand forward
 		T:go("U1 R1C1 L1")								-- place towpath, face forward
-		T:place("water", -1, "down") 					-- place water down
+		T:placeWater("down") 							-- place water down
 		utils.goBack(1)
 		T:place("gate", -1, "forward", false) 			-- place fence gate
 		T:go("R1C1 U1C1 D1 L2F1 C1R1 F1 L1C1R1")		-- over left soul sand
-		T:place("water", -1, "down") 					-- place water down
+		T:placeWater("down") 							-- place water down
 		utils.goBack(1)
 		T:place("gate", -1, "forward", false) 			-- place fence gate
 		T:go("U1 L1C1 R1F1 L1C1 R1x1")					-- facing forward first unit complete
@@ -2741,10 +3012,10 @@ local function createBoatLift(R) -- 59 state:0=new, size:1=extend, side:0=left, 
 	T:go("R1F1 L1C1 D1C1")					-- move forward, build towpath, facing towpath ground level
 	T:go("R1C1 R1F1 L1C1 R1C1 U1C1")		-- build right towpath, facing towpath, above water level
 	T:go("R1F1 L1C1 D1C1 U1")				-- build right towpath next to gate, facing towpath, above water level
-	T:place("water", -1, "down") 
+	T:placeWater("down") 
 	utils.goBack(1)
 	T:go("L1F1")
-	T:place("water", -1, "down") 
+	T:placeWater("down")  
 	
 	return {}
 end
@@ -2857,16 +3128,15 @@ local function createBubbleLift(R) -- 15
 	function lib.addLayer()
 		T:go("F2 L1C1 R1C1 R1C1 L1", false, 0, true)
 		turtle.back()
-		T:place("minecraft:water_bucket", -1, "forward")
 		T:dig("up")	-- clear block above so completed lift can be found
+		T:placeWater("forward") 
 		turtle.back()
-		T:dig("up")	-- clear block above so completed lift can be found
-		T:place("stone", -1, "forward")
+		T:go("C1x0")		
 	end
 	
 	function lib.addSign()
 		turtle.back()
-		T:place("minecraft:water_bucket", -1, "forward")
+		T:placeWater("forward") 
 		T:go("L1B1")
 		T:place("sign", -1, "forward")
 	end
@@ -2880,11 +3150,8 @@ local function createBubbleLift(R) -- 15
 			if water > toBuild then			-- more water than required
 				water = toBuild				-- reduce to correct amount
 			end
-			--while turtle.detect() do 		-- climb to top of existing lift
-				--turtle.up()
-			--end
-			T:up(built)
-			while water > 0 do
+			T:up(built)						-- climb to top of existing lift
+			while water > 0 and toBuild > 0 do
 				lib.addLayer()
 				water = water - 1
 				T:up(1)
@@ -2912,6 +3179,13 @@ local function createBubbleLift(R) -- 15
 				T:place("stone", -1, "up")
 			end
 		end
+		T:go("D1 C1R1x1 R1C1 R1F1 R1x1 L2x1 L1C1 x1") -- delete water sources
+		T:go("D1 C1R1x1 R1")
+		local blockType = T:getBlockType("forward")
+		if blockType:find("dirt") == nil and blockType:find("soul") == nil then -- not dirt or soul sand in front
+			T:go("C1")
+		end
+		T:go("R1F1 R1x1 L2x1 L1C1 x1")
 	end
 	
 	function lib.fillBuckets(toBuild, withSort)
@@ -2921,7 +3195,7 @@ local function createBubbleLift(R) -- 15
 				if emptySlots == 0 then 			-- inventory full
 					break
 				else
-					if T:place("minecraft:bucket", -1, "down", false) then
+					if T:getWater("down") then
 						water = water + 1
 						sleep(0.5)
 					end
@@ -2985,26 +3259,44 @@ local function createBubbleLift(R) -- 15
 		end
 		return emptySlots, water
 	end
-	if R.data == "bedrock" then -- go up 2 
-		T:up(2)
-		R.height = R.height - 1
-	end
-	-- prepare source area and place soul sand
-	T:go("R2 D1F1 D1C2 R1C1 R1", false, 0, true)			-- turn round, down 1, F-> 1 block from ladder, D1 check below, right, check side wall, right facing ladder
-	T:place("minecraft:soul_sand", -1, "forward", false) 	-- placed at end of potential water source
-	T:go("R1C1 R1", false, 0, true)							-- right, check side wall, right facing away from ladder
-	T:go("F1C2 L1C1 R2C1 L1", false, 0, true) 				-- F->, prepare centre of water source: blocks down , left, right
-	T:go("F1C2 L1C1 R1C1 R1C1 R1F1", false, 0, true)		-- F->, prepare end of water source, while turning, F->to centre, facing ladder
-	-- ready for water sources to be placed
-	T:place("minecraft:water_bucket", -1, "forward")		-- place front water source
-	T:turnRight(2)											-- facing backward
-	T:place("minecraft:water_bucket", -1, "forward")		-- place back water source
-	T:go("R2U1") 											-- facing forward, U1, above centre of water source
-	lib.fillBuckets(R.height, true)	-- fill as many buckets as required or until inventory full, sort inventory as well
 	
+	
+	T:go("C1R1")												-- place block next to ladder support block, turn right to check ladder
+	local blockType = T:getBlockType("forward") 				-- Is there a ladder to the right?
+	if blockType:find("ladder") == nil then
+		T:go("C1L2")											-- Place block as ladder not present
+	else														-- ladder present
+		T:go("L2")												-- ready to check other side
+	end
+	blockType = T:getBlockType("forward") 
+	if blockType:find("ladder") == nil then
+		T:go("C1R1")
+	else
+		T:go("R1")
+	end
+	blockType = T:getBlockType("down")
+	local dirt = "minecraft:dirt"
+	if T:getItemSlot("minecraft:soul_sand") > 0 then
+		dirt = "minecraft:soul_sand"
+	end
+	if blockType:find("bedrock") ~= nil then
+		utils.goBack(1)
+		T:place(dirt, -1, "forward", false) 					-- placed at end of potential water source, next to ladder
+	else
+		T:place(dirt, -1, "down", false) 						-- placed in ground, next to ladder
+		utils.goBack(1)
+		T:placeWater("forward") 							-- place extra water source
+	end
+	T:go("R1C1 R2C1 L1F1C2 R1C1 L2C1 R1F1C2 R1C1 L1C1 L1C1 L1F1", false, 0, true)
+	-- ready for water sources to be placed
+	T:placeWater("forward") 								-- place front water source
+	T:turnRight(2)											-- facing backward
+	T:placeWater("forward") 								-- place back water source
+	T:go("R2U1") 											-- facing forward, U1, above centre of water source
+	lib.fillBuckets(R.height, true)							-- fill as many buckets as required or until inventory full, sort inventory as well
 	local nextToLadder = false
 	--T:go("F2R1")
-	T:go("x0F1 x0F1 R1") -- move forward 2 taking out blocks above
+	T:go("x0F1 x0F1C1 R1") 									-- move forward 2 taking out blocks above, plug behind soul sand
 	if T:getBlockType("forward"):find("ladder") == nil then	-- no ladder here
 		T:turnLeft(2)
 		if T:getBlockType("forward"):find("ladder") ~= nil then	-- ladder here
@@ -3026,8 +3318,8 @@ local function createBubbleLift(R) -- 15
 		T:go("L1F1 R1F1R1", false, 0, true)	 			-- above source, level 2
 	end
 	-- ready to build lift
-	lib.buildLift(R.height)
-	lib.cleanUp(R.height)
+	lib.buildLift(R.height - 1)
+	lib.cleanUp(R.height - 1)
 	
 	return {"Bubble lift created", "Check correct operation", "Check exit before using" }
 end
@@ -3132,161 +3424,54 @@ local function createBubbleTrap(R) -- 34
 	return {}
 end
 
-local function createCanal(R) -- 54
-	--[[
-	go(path, useTorch, torchInterval, leaveExisting)
-	R.height = 0 or 1
-	R.side = "R" or "L"
-	R.subChoice =
-		1 = left side, ground level (on towpath)
-		2 = left side above canal water (new canal only)
-		3 = right side above canal water (new canal only)
-		4 = right side, ground level (on towpath)
-		5 = left side in canal water (if present)
-		6 = right side in canal water (if present)
-	
-	if R.height = 0 then already at correct height on canal floor
-		check block below, block to left and block above, move forward tunnelling
-		if entering water then move up, onto canal wall and continue pathway
-		if tunnelling then flood canal
-	else R.height = 1 then above water and on path across
-		move forward, checking for water below
-		if water finishes, move into canal, drop down and continue tunnelling
-	]]
+local function createCorridor(R) -- 52
+	--[[create a corridoor 2 blocks high, with floor and ceiling guaranteed]]
 	local lib = {}
-			
-	function lib.side(R, maxLength)
-		-- Already in position facing new canal, 2 water buckets
-		local torch = R.length - maxLength					-- start torch count at 1-2 depending on lib.initialise()
-		local sourceCount = 0								-- allow for 1 iteration of placing source blocks when changing from solid to water
-		local numBlocks = 0									-- distance travelled
-		local _, isSource = nil, false						-- initialise variables
-		local oTurn = "R"									-- assume R.side == "L" -> oTurn = "R"
-		if R.side == "R" then								-- R.side = "R"
-			oTurn = "L"										-- oTurn = "L"
-		end
-		
-		while numBlocks < maxLength do						-- loop from here. Facing forwards to extend canal
-			torch = torch + 1								-- increase torch spacing interval
-			numBlocks = numBlocks + 1						-- inrease block count
-			if deletesWater then							-- up to and including mc 1.12.2
-				T:forward(1)								-- move forward to extend canal  | |>|
-				_, isSource = T:isWater("down")				-- check if source water below
-				if isSource then
-					sourceCount = sourceCount + 1			-- count source blocks
-				else										
-					T:down(1)								-- down to canal floor
-					sourceCount = 0							-- reset
-					T:go("C2", false, 0, false)				-- place block below
-					T:up(1)									-- up to water level
-				end											-- still facing away from canal
-				T:go(R.side.."1F1C2", false, 0, false) 		-- go above towpath, place stone down, facing out
-				if turtle.detectUp() then 					-- ? block above
-					T:go(R.side.."2U1F1D1"..R.side.."2")	-- rotate to face canal, up 1 forward over canal, back down to water level, face towpath
+	
+	function lib.continue(R, currentSteps, totalSteps)
+		if not R.silent then
+			if currentSteps >= 64 and R.length == 0 then
+				-- request permission to continue if infinite
+				T:clear()
+				print("Completed "..totalSteps..". Ready for 64 more")
+				print("Do you want to continue? (y/n)")
+				response = read()
+				if response:lower() ~= "y" then
+					return true, 0
 				else
-					utils.goBack(1)							-- face towpath
-				end
-				-- facing towpath
-				if R.torchInterval > 0 then					-- Are torches required?
-					if torch == R.torchInterval  or numBlocks == 0 then		-- check if ready to place
-						torch = 0							-- reset interval counter
-						T:go("U1F1")
-						T:place("torch", -1, "down")		-- place torch
-						utils.goBack(1)
-						T:down(1)
-					end
-				end											-- facing towpath, above water
-				-- facing towpath
-				if isSource and scoreCount > 0 then
-					T:go(oTurn.."1x0")						-- face new canal direction
-				else										-- not source below, or first time found, ensures continous canal
-					T:go(R.side.."1x0")						-- face back to existing canal
-					T:place("water_bucket", -1, "down")		-- place water
-					T:forward(1)							-- forward 1
-					T:place("water_bucket", -1, "down")		-- place water
-					utils.getWater() 							-- collects water from below
-					utils.goBack(1) 						-- back 1
-					T:go(oTurn.."1x0")						-- face new canal
-				end
-			else
-				T:forward(1) 								-- move forward to extend canal
-				_, isSource = T:isWater("forward")			-- check if source water ahead
-				if isSource then							-- ? source ahead
-					sourceCount = sourceCount + 1
-				else
-					sourceCount = 0
-					if not turtle.detectDown() then			-- air / water below, but no source in front, so fill it
-						T:go(oTurn.."1D1")					-- ready to repair neighbouring canal base
-						if T:getBlockType("forward"):find("turtle") ~= nil then -- turtle in similar position
-							if R.side == "L" then			-- only left side repairs, so wait 1 second
-								sleep(1)
-								T:go("C1")					-- repair neighbouring canal base
-							end
-							T:go(R.side.."1")				-- face forward
-						else
-							T:go("C1"..R.side.."1")			-- repair neighbouring canal base if air
-						end
-						T:up(1)
-					end
-					T:go("C2", false, 0, false)				-- place block below if not already source
-				end
-				T:go(R.side.."1C1", false, 0, false) 		-- face canal wall, replace with stone
-				
-				local placeTorch = false
-				if R.torchInterval > 0 then					-- Are torches required?
-					if torch == R.torchInterval  or numBlocks == 0 then		-- check if ready to place
-						torch = 0							-- reset interval counter
-						placeTorch = true
-					end
-				end
-				if (isSource and placeTorch) or not isSource then
-					T:go("U1x1 U1x1")						-- up 2 and excavate blocks above tow path
-					if placeTorch then						-- torch required
-						T:forward(1)						-- move over towpath
-						T:place("torch", -1, "down")		-- place torch
-						utils.goBack(1)						-- move back
-					end
-					T:down(2)								-- return to canal base
-				end
-				if isSource and sourceCount > 1 then 		-- source ahead found at least once
-					T:go(oTurn.."1")						-- face newcanal as no water refill required
-				else										-- not source in front, or first time found, ensures continous canal
-					T:go(oTurn.."1C1") 						-- *| | | |>| face along new canal and block entrance
-					utils.goBack(1)							-- *| | |>| | back 1
-					T:place("water_bucket", -1, "forward")	-- *| | |>|W| place water
-					T:go(oTurn.."2") 						-- *| | |<|W| face existing canal 
-					_, isSource = T:isWater("forward")		-- *| |?|<|W| check if source water ahead 
-					if not isSource then
-						if not T:place("water_bucket", -1, "forward") then	-- place water again *| |W|<|W|
-							while not T:place("bucket", -1, "forward") do -- wait for other turtle
-								print("Out of water buckets")
-								sleep(1)
-							end
-							sleep(0.2)
-							T:place("bucket", -1, "forward") 
-						end
-					end
-					utils.getWater() 							-- collects water *| |W|<|W|
-					T:go(R.side.."2F1") 						-- face along new canal *| |W|>|W| to *| |W|W|>|
+					return false, currentSteps
 				end
 			end
 		end
+		return true, currentSteps
 	end
-			
-	local maxLength = 1024
-	if R.length ~= 0 then
-		maxLength = R.length
-	end
-	menu.clear()
-	menu.colourWrite("Building canal "..R.side.." side .......", colors.yellow, nil, nil, false, true)
-	local moves = utils.initialiseCanal(R) -- move to correct position and/or start new canal
-	lib.side(R, maxLength - moves)
 	
-	return {}
-end
-
-local function createCorridor(R) -- 52
-	local lib = {}
+	function lib.seal()	
+		local blockType = T:getBlockType("forward")
+		if blockType:find("water") ~= nil then
+			T:place("stone", 0, "forward", false)
+			return "water"	-- water found
+		elseif blockType:find("lava") ~= nil then
+			T:place("stone", 0, "forward", false)
+			return "lava"	-- lava found
+		end
+		return ""	-- no water or lava
+	end
+	
+	function lib.checkSeal(R)
+		local fluidType = ""
+		if R.data == "seal" then 		-- check for lava/water at the sides
+			T:turnRight(1)
+			fluidType = lib.seal()		-- could be "", "water", "lava"
+			T:turnLeft(2)
+			local blockType = lib.seal()
+			if fluidType == "" then		-- no water / lava so far
+				fluidType = blockType	-- could be "", "water", "lava"
+			end
+			T:turnRight(1)
+		end
+		return fluidType				-- could be "", "water", "lava"
+	end
 	
 	function lib.placeTorch(R, torchSpaces, totalSteps)
 		if R.torchInterval > 0 then -- torches onboard
@@ -3305,29 +3490,48 @@ local function createCorridor(R) -- 52
 	local currentSteps = 0					-- counter for infinite length. pause every 64 blocks
 	local totalSteps = 0					-- counter for all steps so far
 	local torchSpaces = R.torchInterval		-- if torches present, counter to place with 8 blocks between
+	local fluidType = ""
+	local damLength = 0
+	local damStarted = false
+	local doContinue = true
 	if T:getItemSlot("minecraft:torch") == 0 then
 		R.torchInterval = 0 -- set to default 9 in getTask()
 	end
 	for steps = 1, R.length do
-		if not R.silent then
-			if currentSteps >= 64 and R.length == 0 then
-				-- request permission to continue if infinite
-				T:clear()
-				print("Completed "..totalSteps..". Ready for 64 more")
-				print("Do you want to continue? (y/n)")
-				response = read()
-				if response:lower() ~= "y" then
-					break
-				end
-				currentSteps = 0
-			end
+		-- starts on floor of tunnel
+		doContinue, currentSteps = lib.continue(R, currentSteps, totalSteps) -- continue tunnelling?
+		if not doContinue then
+			break
 		end
-		T:go("C2U1C0", false, 0, true)
-		torchSpaces = lib.placeTorch(R, torchSpaces, totalSteps) -- original value or 1 if torch placed
-		T:go("F1D1", false, 0, true)
+		T:go("C2U1C0", false, 0, true)	-- place floor, up 1, place ceiling
+		fluidType = lib.checkSeal(R)		-- if R.data == "seal", check for water/lava at ceiling level
+		if fluidType == "" then	-- either R.data ~= "seal" or no fluid found
+			torchSpaces = lib.placeTorch(R, torchSpaces, totalSteps) -- original value or 1 if torch placed
+			T:go("F1D1", false, 0, true)
+		elseif fluidType == "water" then
+			T:go("F1R2 C1D1 C1L2")
+			damStarted = true
+			damLength = damLength + 1
+		else	--lava
+			T:go("F1D1", false, 0, true)
+		end
+		blockType = lib.checkSeal(R)
+		if blockType ~= "" then
+			fluidType = blockType
+		end
 		currentSteps = currentSteps + 1
 		totalSteps = totalSteps + 1
 		torchSpaces = torchSpaces + 1
+		if damStarted and fluidType == "" then -- was in water, but no more
+			T:go("R2 F"..damLength + 1 .."U1L2F"..damLength + 1 .."D1")
+			damStarted = false
+		end
+	end
+	if fluidType ~= "" then -- water or lava found while tunnelling
+		T:go("U1C0")
+		lib.checkSeal(R)
+		T:go("C1")
+		T:down(1)
 	end
 	return {}
 end
@@ -3374,7 +3578,7 @@ local function createDragonTrap() -- 49
 	T:forward(1)
 	T:place("minecraft:obsidian", -1, "down")
 	T:go("R2F1x2R2")
-	T:place("minecraft:water_bucket", -1, "forward")
+	T:placeWater("forward") 
 	T:go("R2F6R2")
 	lib.attack()
 	return {}
@@ -3514,7 +3718,7 @@ local function createEnderTower(stage) -- 66
 				if emptySlots == 0 then -- inventory full
 					break
 				else
-					if T:place("minecraft:bucket", -1, "down", false) then
+					if T:getWater("down") then
 						water = water + 1
 						sleep(0.5)
 					end
@@ -3541,7 +3745,7 @@ local function createEnderTower(stage) -- 66
 			end
 			T:forward(1)
 			for i = 1, water do -- build lift by no of water buckets
-				if T:place("minecraft:water_bucket", -1, "forward", false) then
+				if T:placeWater("forward")  then
 					T:up(1)
 					height = height - 1
 					toBuild = toBuild - 1
@@ -3600,14 +3804,14 @@ local function createEnderTower(stage) -- 66
 		T:go("F1C2F1C2", false, 0, false, preferredBlock) -- over block 2 of water source
 		T:go("F1C2U1C2", false, 0, false, preferredBlock) -- over block 4 of water source
 		T:go("F1C2F1C2R2F5R2", false, 0, false, preferredBlock) -- over block 1 of water source
-		T:place("minecraft:water_bucket", -1, "down", false)
+		T:placeWater("down") 
 		T:forward(2) -- over block 3 of water source
-		T:place("minecraft:water_bucket", -1, "down", false)
+		T:placeWater("down")
 		turtle.back() -- over block 2 of water source
-		T:place("minecraft:bucket", -1, "down", false)
+		T:getWater("down")
 		T:go("F2D1R2C2") -- over block 4 of water source
 		T:go("U1", false, 0, false, preferredBlock)
-		T:place("minecraft:water_bucket", -1, "down", false)
+		T:placeWater("down")
 		T:forward(4)
 		lib.stackBuckets() -- put all buckets in same slot
 		T:dropItem("minecraft:dirt", "up", 0) -- drop dirt up:  clsTurtle.dropItem(self, item, direction, keepAmount)
@@ -3780,8 +3984,12 @@ local function createFarm(R, extend) -- 31
 				T:place("dirt", -1, "forward", false)
 			elseif pattern[i] == "t" then
 				--if not T:place("minecraft:crafting_table", -1, "forward", false) then
-				if not T:place(storage, -1, "forward", false) then
-					T:place("dirt", -1, "forward", false) -- dirt if no crafting table
+				if T:place(storage, -1, "forward", false) then
+					if T:dropItem("crafting", "forward", 0) then
+						print("Crafting table -> buried storage")
+					end
+				else
+					T:place("dirt", -1, "forward", false) -- dirt if no storage available
 				end
 			else
 				T:place(R.useBlockType, -1, "forward", false)
@@ -3789,7 +3997,7 @@ local function createFarm(R, extend) -- 31
 			T:turnRight(1)
 		end
 		T:up(1)
-		T:place("minecraft:water_bucket", -1, "down")
+		T:placeWater("down")
 	end
 	
 	function lib.placeDirt(count, atCurrent)
@@ -3896,7 +4104,7 @@ local function createFarm(R, extend) -- 31
 			T:go("F1x0x2C2", false, 0, false, R.useBlockType)
 		end
 	end
-	T:go("R1F1R1x0x2C2F1D1", false, 0, false, R.useBlockType)-- turn round ready for first dirt col
+	T:go("R1F1 R1x0 x2C2 F1D1", false, 0, false, R.useBlockType)-- turn round ready for first dirt col
 	lib.addWaterSource(R, {"d","c","c","d"}, storage) -- water at top of farm
 	lib.placeDirt(9, false) -- place dirt back to start
 	lib.addWaterSource(R, {"c","c","t","d"}, storage) -- water source next to chests, includes crafting table
@@ -4130,14 +4338,44 @@ local function createIceCanal(R) -- 55
 		2: build left towpath
 		3: build right towpath
 		4: move left into canal, build right towpath
-		5: build alternating ice road
-		6: create 3 block high air gap / 2 over water
+		5/8: clear path 3 blocks high, place slabs/torches
+		6/7: build alternating ice road / create 3 block high air gap (2 over water)
 	]]
 	local oTurn = "R"
 	if R.side == "R" then
 		oTurn = "L"
 	end
 	local lib = {}
+	
+	function lib.convertTowpath(R)
+		-- only used to convert existing water canal, so assume towpath already present
+		-- starting position 1 block above existing towpath
+		for i = 1, R.length do
+			if turtle.detectDown() then							-- eg existing torch
+				T:dig("down")
+			end
+			local placeSlab = true
+			if R.torchInterval > 0 then							-- place torches
+				if i == 1 or i % R.torchInterval == 0 then		-- ready to place torch
+					--go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
+					T:go("C2x0", false, 0, false, R.useBlockType)-- place solid block below
+					T:go("F1R2x0")
+					T:place("torch", 0, "forward")				-- place torch, move forward
+					T:turnRight(2)								-- turn round
+					placeSlab = false
+				end
+			end
+			if placeSlab then
+				T:dig("up")
+				if not T:place("slab", 0, "down") then			-- break if out of slabs
+					break
+				end
+				if i < R.length then
+					T:forward(1)								-- move forward
+				end
+			end
+		end
+	end
 	
 	function lib.iceCanalTowpath(R)
 		-- move forward placing slabs along the way. If existing water canal, ceiling will be raised by 1 block
@@ -4161,39 +4399,48 @@ local function createIceCanal(R) -- 55
 	
 	function lib.iceCanalEdge(R, addTorch, numBlocks, placeIce)
 		-- starting position facing canal side
-		local blockType = T:getBlockType("forward")			-- ? air / slab / trapdoor / other
+		local blockType = T:getBlockType("forward")			-- ? air / slab / other
 		local isWater, isSource, isIce = T:isWater("down")	-- water / ice below
-		if blockType:find("slab") == nil and blockType:find("trapdoor") == nil then -- add slab
-			if addTorch then														-- check if torch needed
+		if blockType:find("slab") == nil then 				-- add slab
+			if addTorch then								-- check if torch needed
 				-- T:place(blockType, damageNo, direction, leaveExisting, signText)
 				if not T:place("stone", -1, "forward", false) then
 					T:checkInventoryForItem({"stone"}, {math.ceil(R.length / R.torchInterval)}, true)
 				end
-				T:go("U1x1 U1F1")	 				-- water level to 2 above water level
+				T:go("U1x1 U1x1 D1")	 				-- water level to 2 above water level
 				if T:getItemSlot("minecraft:torch", -1) > 0 then
-					T:place("torch", -1, "down", false)
+					T:place("torch", -1, "forward", false)
 				end
-				utils.goBack(1)
-				if isSource then					-- no need to clear block below water level
-					T:down(2)						-- back to above water level
-				else								-- not source at water level
-					T:go("U1x1 D3")					-- clear blocks above, down to above water level
-					if not isIce then				-- break block below if NOT ice
-						T:dig("down")
-					end
+				T:down(1)								-- back to above water level
+				if not isIce then						-- break block below if NOT ice
+					T:dig("down")
 				end
 			else
 				if not T:place("slab", -1, "forward", false) then
 					T:checkInventoryForItem({"slab"}, {R.length - numBlocks}, true)
 				end
-				if not isSource then				-- NOT on water, so dig above
-					T:go("U1x1 U1x1 U1x1 D3")
+				if not isSource then					-- NOT on water, so dig above
+					T:go("U1x1 U1x1 D2")
 				end
 				if not isIce and not isSource then
 					T:dig("down")
 				end
 			end
-			-- else	slab or trapdoor already on side
+		else -- slab already on side
+			if addTorch then							-- check if torch needed
+				T:dig("forward")
+				if not T:place("stone", -1, "forward", false) then
+					T:checkInventoryForItem({"stone"}, {math.ceil(R.length / R.torchInterval)}, true)
+				end
+				T:go("U1x1 U1x1 D1")	 				-- water level to 2 above water level
+				if T:getItemSlot("minecraft:torch", -1) > 0 then
+					T:place("torch", -1, "forward", false)
+				end
+				T:down(1)								-- back to above water level
+				if not isIce then						-- break block below if NOT ice
+					T:dig("down")
+				end
+			end
 		end
 		if R.data == "ice" and placeIce and not isIce then -- R.data = "ice", placeIce = true, not already ice present
 			T:place("ice", -1, "down", true)
@@ -4203,9 +4450,9 @@ local function createIceCanal(R) -- 55
 		end
 	end
 	
-	function lib.iceCanalCentreLeft(length)
+	function lib.convertIcepath(length)
 		-- use only for placing ice to convert a water canal
-		--place ice on alternate blocks until length reached or run out of ice
+		-- place ice on alternate blocks until length reached or run out of ice
 		local placeIce = true
 		for i = 1, length do
 			if T:getBlockType("down"):find("ice") == nil then -- no ice below
@@ -4221,20 +4468,16 @@ local function createIceCanal(R) -- 55
 			else -- ice already below
 				placeIce = true
 			end
-			if turtle.digUp() then
-				T:go("U1x0D1")
-			end
-			T:forward(1)
+			T:go("U1x0 D1F1")
 			placeIce = not placeIce -- reverse action
 		end
 	end
 	
-	function lib.iceCanalCentreRight(length)
+	function lib.convertToAir(length)
+		-- use only for converting a water canal. start at ground level
 		-- dig up/down/forward to clear space
 		for i = 1, length + 1 do
-			if turtle.digUp() then
-				T:go("U1x0D1")
-			end
+			T:go("U1x0D1")
 			if i < length + 1 then
 				T:go("x2F1")
 			else
@@ -4245,8 +4488,8 @@ local function createIceCanal(R) -- 55
 	
 	function lib.initialise(R)
 		if R.subChoice == 1 or R.subChoice == 4 then		
-			local blockType = T:getBlockType("down")		-- ? at ground/water level or on top of existing slab/trapdoor
-			if blockType:find("slab") ~= nil or blockType:find("trapdoor") ~= nil then -- slab/trapdoor already present
+			local blockType = T:getBlockType("down")		-- ? at ground/water level or on top of existing slab
+			if blockType:find("slab") ~= nil then 			-- slab already present
 				T:go(oTurn.."1F1D1"..R.side.."2")			-- move right/left forward, down onto ice canal top, face canal wall
 			elseif blockType:find("torch") ~= nil then
 				T:go(oTurn.."1F1D2"..R.side.."2")			-- move right/left forward, down onto ice canal top, face canal wall
@@ -4254,7 +4497,7 @@ local function createIceCanal(R) -- 55
 				T:go(oTurn.."1F1"..R.side.."2")				-- move right/left forward onto ice canal top, face canal wall
 			end
 		else
-			if T:isWater("forward") then -- user put turtle inside canal water
+			if T:isWater("forward") then 					-- player put turtle inside canal water
 				T:up(1)
 			end
 			T:go(R.side.."1")								-- face canal wall
@@ -4263,118 +4506,25 @@ local function createIceCanal(R) -- 55
 	
 	if R.length == 0 then R.length = 1024 end
 
-	if R.subChoice < 5 then					-- towpath 1,2,3,4
-		lib.initialise(R)					-- reposition
-		lib.iceCanalTowpath(R)				-- build towpath
-	elseif R.subChoice == 5 then			-- assume placed on existing ice or initial ice position
-		lib.iceCanalCentreLeft(R.length)	-- place ice
-	elseif R.subChoice == 6 then			-- assume placed at top of ice / water level
-		lib.iceCanalCentreRight(R.length)	-- clear 3 high area
+	if R.subChoice <= 4  then								-- towpath 1,2,3,4
+		lib.initialise(R)									-- reposition
+		lib.iceCanalTowpath(R)								-- build towpath
+	elseif R.subChoice == 5 or R.subChoice == 8 then		-- assume placed on towpath
+		if T:getBlockType("down"):find("slab") ~= nil then 	-- slab already present
+			T:go("F1")
+		else
+			T:up(1)
+		end
+		lib.convertTowpath(R)
+	elseif R.subChoice == 6 or R.subChoice == 7 then	
+		if R.data == "ice" then							-- assume placed on existing ice or initial ice position
+			lib.convertIcepath(R.length)-- place ice
+		else											-- assume placed on empty path
+			lib.convertToAir(R.length)					-- clear 3 high area
+		end
 	end
 	
 	return {}
-end
-
-local function createIceCanalBorder(R) -- 59
-	--[[ Used to convert water canal to ice with trapdoor / slab margin on one side ]]
-	-- position gained from setup left = 0, right = 1
-	local lib = {}
-	
-	function lib.placeTrapdoor()
-		if T:getBlockType("down"):find("trapdoor") == nil then
-			T:place("trapdoor", -1, "down", false) -- add trapdoors to canal towpath and activate them
-		end
-		return false
-	end
-	
-	function lib.placeSlab()
-		if T:getBlockType("down"):find("slab") == nil then
-			T:place("slab", -1, "down", false)
-		end
-		return true
-	end
-	
-	function lib.placeTorch(torchBlocks, onWater)
-		if T:getItemSlot("minecraft:torch", -1) > 0 then
-			if torchBlocks == 8 and onWater then
-				-- T:fillVoid(direction, tblPreferredBlock, leaveExisting)
-				T:fillVoid("down", {}, false)
-				T:up(1)
-				T:place("minecraft:torch", -1, "down", false)
-				T:go("F1D1")
-				torchBlocks = 0
-			elseif torchBlocks == 9 and not onWater then
-				T:go("R2")
-				T:place("minecraft:torch", -1, "forward", false)
-				T:go("L2")
-				torchBlocks = 0
-			end
-		end
-		return torchBlocks
-	end
-	
-	local A = "R"
-	local B = "L"
-	if R.subChoice == 1 then
-		A = "L"
-		B = "R"
-	end
-	-- check position. Should be facing down canal with wall on same side
-	-- so wall will be detected on i = 4 (if present)
-	local turns = 0
-	--local wallFound = false
-	local numBlocks = 0
-	if R.length == 0 then
-		R.length = 2048
-	end
-	local isWater, isSource, isIce = T:isWater("down")
-	while not isWater and not isIce do
-		if not turtle.down() then
-			break
-		end -- move to ground -- canal edge / slab / trapdoor
-		isWater, isSource, isIce = T:isWater("down")
-	end
-	local onWater = false
-	local torchBlocks = 8	-- force torch placed on first block
-	-- check if slab / trapdoor below
-	blockType = T:getBlockType("down")
-	if blockType:find("slab") ~= nil then
-		onWater = true
-	elseif blockType:find("trapdoor") ~= nil then
-		onWater = false
-		torchBlocks = 9
-	elseif blockType:find("slab") == nil and blockType:find("trapdoor") == nil then -- not on existing slab / trapdoor
-		T:up(1)
-		if turtle.detectUp() then -- ceiling present: tunnel
-			torchBlocks = 9
-		else
-			onWater = true
-		end
-	end
-	redstone.setOutput("bottom", true)
-	-- add trapdoors to canal towpath and activate them
-	for i = 1, R.length do
-		if torchBlocks >= 8 then
-			torchBlocks = lib.placeTorch(torchBlocks, onWater)
-		end
-		--T:go(A.."1x2")
-		if turtle.detectUp() then -- ceiling present: inside tunnel
-			T:go(A.."1x2")
-			onWater = lib.placeTrapdoor()
-			T:go(B.."1F1")
-		else
-			onWater = lib.placeSlab()
-			T:forward(1)
-		end
-		--T:go(B.."1F1")
-		numBlocks = numBlocks + 1
-		torchBlocks = torchBlocks + 1
-		if T:getItemSlot("trapdoor", -1) == 0 or T:getItemSlot("slab", -1) == 0 then
-			print("Out of slabs / trapdoors")
-			break
-		end
-	end
-	return {numBlocks}
 end
 
 local function createLadder(R) -- 12
@@ -4546,21 +4696,31 @@ local function createMine() -- 11
 	return{"Mining operation complete"}
 end
 
-local function createMobFarmCube(R, blaze) -- 61, 62
+local function createMobFarmCube(R) -- 61, 62
 	--[[
 	Part 1 / 3 Mob Spawner Farm
 	blaze = true: blaze spawner in nether
-	R.subChoice is set to:
-	1 = on spawner
-	2 = bottom left corner
-	3 = top left corner
-	4 = bottom right, corner
-	5 = top right corner
-	R.width / R.length set by player (external size)
+		R.subChoice is set to:
+		1 = on top of spawner
+		2 = line of sight
+		3 = room below
+	blaze = false: overworld mob spawner
+		R.subChoice is set to:
+		1 = on top of spawner
+		2 = bottom left corner
+		3 = top left corner
+		4 = bottom right, corner
+		5 = top right corner
+		R.width / R.length set by player (external size)
 	]]
-	if blaze == nil then blaze = false end
+	local blaze = true
+	if R.data == "spawner" or R.data == "chest" then
+		blaze = false
+	end
 	local continue = false
-	if R.subChoice == 2 then continue = true end
+	if R.data == "restart" then
+		continue = true
+	end
 	R.direction = "clock"		-- starting on right side
 	if not blaze then
 		print("R.width: "..tostring(R.width))
@@ -4571,9 +4731,8 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 			R.direction = "anticlock"
 		end
 	end
-	-- R.subChoice == 2 allows for 2-part operation 1 = main cube, 2 = rails etc
+	-- R.data allows for 2-part operation "blaze" = main cube, "restart" = killzone
 	T:clear()
-	print("Begin: blaze="..tostring(blaze).." continue="..tostring(continue))
 	local lib = {}
 	
 	function lib.floorSection(length)
@@ -4587,10 +4746,16 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 		end
 	end
 	
-	function lib.wallSection()
+	function lib.wallSection(blaze)
+		blaze = blaze or false
 		for i = 1, 4 do
 			for j = 1, 11 do
-				T:go("C0C2", false, 0, false)
+				if blaze then
+					T:place("slab", 0, "up", false)
+					T:go("C2", false, 0, false)
+				else
+					T:go("C0C2", false, 0, false)
+				end
 				if j < 11 then
 					T:forward(1)
 					T:go("R2C1L2", false, 0, false)
@@ -4601,21 +4766,38 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 		end
 	end
 	
-	function lib.ceiling()
+	function lib.ceiling(blaze)
 		-- T:go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
 		-- all outer walls complete, now for remaining 9x9 ceiling
+		blaze = blaze or false
 		for i = 1, 9 do
 			for j = 1, 9 do
-				T:go("C0x2", false, 0, true)
+				if blaze then
+					T:place("slab", 0, "up", false)
+					T:dig("down")
+				else
+					T:go("C0x2", false, 0, true)
+				end
 				if j < 9 then
 					T:forward(1)
-				else
+				else	-- end of length
+					local place = false
 					if i%2 == 1 then -- odd numbers 1,3,5,7,9
 						if i < 9 then
-							T:go("R1F1R1C0x2", false, 0, true)
+							place = true
+							T:go("R1F1 R1")
 						end
 					else
-						T:go("L1F1L1C0x2", false, 0, true)
+						place = true
+						T:go("L1F1 L1")
+					end
+					if place then
+						if blaze then
+							T:place("slab", 0, "up", false)
+							T:dig("down")
+						else
+							T:go("C0x2", false, 0, true)
+						end
 					end
 				end
 			end
@@ -4635,28 +4817,19 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 	end
 	
 	function lib.isSpawner()
-		local found, position = false, ""
-		
 		local blockType = T:getBlockType("down")
 		if blockType:find("spawner") ~= nil then
-			position = "top"
-			found = true
+			return true, "top"
 		end
-		if position == "" then
-			blockType = T:getBlockType("up")
-			if blockType:find("spawner") ~= nil then
-				position = "bottom"
-				found = true
-			end
+		blockType = T:getBlockType("up")
+		if blockType:find("spawner") ~= nil then
+			return true, "bottom"
 		end
-		if position == "" then
-			blockType = T:getBlockType("forward")
-			if blockType:find("spawner") ~= nil then
-				position = "forward"
-				found = true
-			end
+		blockType = T:getBlockType("forward")
+		if blockType:find("spawner") ~= nil then
+			return true, "forward"
 		end
-		return found, position
+		return false, ""
 	end
 	
 	function lib.placeFloor(width, length, blockType)
@@ -4683,7 +4856,7 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 		--go forward until hit either a wall or a chest
 		local blocks = 1
 		print("Searching strip, distance = "..distance)
-		while blocks < distance do
+		while blocks < distance do --max travel is external width/length
 			if turtle.forward() then
 				blocks = blocks + 1
 			else
@@ -4725,12 +4898,13 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 			-- now at mid-dungeon, facing wall
 			-- deposit chest outside the dungeon
 			while turtle.back() do end -- backing spawner
-			T:go("F6x0x1x2")
+			T:go("x0 F1x0 F1x0 F1x0 F1x0 F1x0 F1x0 x1x2")
 			-- place(self, blockType, damageNo, direction, leaveExisting, signText)
 			T:place("chest", -1, "forward", false)
 			-- empty out all except stone and slab
 			T:emptyInventorySelection("forward", {"cobble", "tuff", "slab", "granite", "andesite", "diorite" }, {0,0,0,0,0,0})
 			T:turnLeft(2)
+			T:checkInventoryForItem({"stone"}, {512}, false, "Full cube uses ~700 blocks\nEstimate your requirements")
 			while turtle.forward() do end -- facing spawner
 		else
 			if R.direction == "clock" then
@@ -4748,14 +4922,14 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 		if blockType == "" then -- nothing in front.Error
 			return false, "No block in front: Check position."
 		else -- attempt entry into dungeon wall
-			if R.subChoice == 2 then 	-- bottom left
-				T:go("R1F1L1U2F2R1")
+			if R.subChoice == 2 then 		-- bottom left
+				T:go("R1F1 L1U2 F2R1")
 			elseif R.subChoice == 3 then	-- top left
-				T:go("R1F1L1D1F2R1")
+				T:go("R1F1 L1D1 F2R1")
 			elseif R.subChoice == 4 then	-- bottom right
-				T:go("L1F1L1U2F2L1")
+				T:go("L1F1 R1U2 F2L1")
 			elseif R.subChoice == 5 then	-- top right
-				T:go("L1F1L1D1F2L1")
+				T:go("L1F1 R1D1 F2L1")
 			end
 			while turtle.down() do end -- either on floor or chest
 			if lib.isChest("down") then
@@ -4769,15 +4943,18 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 	
 	function lib.isChest(direction)
 		direction = direction or "forward"
-		local found = false
 		local blockType = T:getBlockType(direction)
 		if blockType:find("chest") ~= nil then -- chest found. early stages so empty and break it
 			print("Chest found")
-			found = true
 			while T:suck(direction) do end
 			T:dig(direction, false) -- false prevents checking for chests
+			return true
+		elseif blockType:find("torch") ~= nil then 
+			print("Torch found")
+			T:dig(direction, false) -- false prevents checking for chests
+			return true
 		end
-		return found
+		return false
 	end
 		
 	function lib.findSpawner(blaze)
@@ -4818,33 +4995,17 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 		return found, position
 	end
 	
-	function lib.rail(move, isPowered, count)
-		if move ~= "" then
-			T:go(move)
-		end
-		for i = 1, count do
-			if isPowered then
-				if not T:place("minecraft:powered_rail", -1, "down", false) then
-					T:place("minecraft:golden_rail", -1, "down", false)
-				end
-			else
-				T:place("minecraft:rail", -1, "down", false)
-			end
-			if i < count then
-				T:forward(1)
-			end
-		end
-	end
 	
 	if not continue then -- new mob cube either dungeon or blaze
 		-- clsTurtle.go(self, path, useTorch, torchInterval, leaveExisting, preferredBlock)
 		-- determine spawner position level 4, move to top of spawner (level 6)
 		print("Checking if already at spawner")
 		local found, position = lib.isSpawner() -- already on spawner?
-		print("result: found="..tostring(found)..", position="..position)
-		
 		if blaze then 
 			if not found then -- away from spawner
+				if R.subChoice == 3 then
+					T:go("U5")
+				end
 				found, position = lib.findSpawner(blaze)
 			end
 		else -- go to bottom of dungeon and empty chests
@@ -4884,11 +5045,10 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 			T:up(1)
 			T:place("slab", -1, "down", true) 				-- place slab on top T:place(blockType, damageNo, direction, leaveExisting)
 			-- go up 2 blocks, forward 5, right, forward 5, right
-			T:go("U2F5R1F5R1") 								-- Level 2: now placed 1 below ceiling inside wall, top right corner of new dungeon
-			lib.wallSection() 								-- fix layers 1, 2, 3 including ceiling margin turtle at Level 2
-			--T:go("F1R1 F1R2 C1R1", false, 0, false) 		-- exit wall, repair behind, still Level 2: fix ceiling
-			T:go("F1R2 C1L1 F1R2 C1R1", false, 0, false)	-- exit wall, repair behind, still Level 2: fix ceiling
-			lib.ceiling()									-- end opposite corner to start
+			T:go("U2F5 R1F5 R1") 							-- Level 2: now placed 1 below ceiling inside wall, top right corner of new dungeon
+			lib.wallSection(blaze) 							-- fix layers 1, 2, 3 including ceiling margin turtle at Level 2			
+			T:go("F1R2 C1L1 F1R2 C1R1", false, 0, false)	-- exit wall, repair behind, still Level 2
+			lib.ceiling(blaze)								-- fix ceiling, end opposite corner to start
 			T:go("R2D3")									-- clear the inner walls inside original dungeon
 			lib.clearWall(9)								-- clear the 9 x 9 area around the spawner
 			T:go("F1R1F1L1")
@@ -4897,44 +5057,40 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 			lib.clearWall(5)								-- clear the 5 x 5 area around the spawner. Also needed for cave spiders
 			T:go("R2F1R1F1R1")
 			T:go("F7R1 F8L1F1R2", false, 0, false)			-- return from ceiling, enter wall below previous section: Level 5
-			lib.wallSection() 								-- deal with areas from spawner level up (4,5,6). walls only
-			--T:go("F1R1F1R2C1R1D3", false, 0, false) 	-- exit wall, repair behind, embed 1 below original floor: Level 8
+			lib.wallSection() 								-- deal with areas from spawner level up (4,5,6). walls only	
 			T:go("F1R2 C1L1 F1R2 C1R1 D3", false, 0, false) -- exit wall, repair behind, embed 1 below original floor: Level 8
 			clearRectangle({width = 9, length = 9, up = true, down = true}) -- clear levels 7,8,9
-			T:go("L1F1 L1F1L2", false, 0, false) 			-- ready for next wall section
-			if blaze then
-				T:go("F1R1 F1L1 D3", false, 0, false) 		-- exit wall, move in ready for floor: Level 11
-			else
-				lib.wallSection() 						-- deal with walls on levels 7,8,9
-				T:go("F1R2 C1L1 F1R2 C1R1 D3", false, 0, false) 	-- exit wall, repair behind, embed 4 below original floor: Level 11
-			end
-			--T:go("F1R1 F1R2C1 R1D3", false, 0, false) 	-- exit wall, repair behind, embed 4 below original floor: Level 11
-			--print("Check: about to clear 3 floors 3 below spawner")
-			--read()
+			T:go("L1F1 L1F1L2", false, 0, false) 			-- go inside wall sectio, ready for next wall section
+			lib.wallSection() 								-- deal with walls on levels 7,8,9
+			T:go("F1R2 C1L1 F1R2 C1R1 D3", false, 0, false) -- exit wall, repair behind, embed 4 below original floor: Level 11
+			--print("Check: about to clear 3 floors 3 below spawner") read()
 			clearRectangle({width = 9, length = 9, up = true, down = true}) -- clear levels 10,11,12 
+			
+			if blaze then
+				T:go("L1F1 L1F1L2", false, 0, false) 			-- ready for next wall section
+				lib.wallSection() 								-- wall on layers 10,11,12
+				T:go("F1R2 C1L1 F1R2 C1R1 D3", false, 0, false) -- exit wall, repair behind, embed 1 below original floor: Level 8
+				clearRectangle({width = 9, length = 9, up = true, down = true}) -- clear levels 13, 14, 15
+			end
+			
 			T:go("L1F1L1F1L2", false, 0, false) -- ready for next wall section
 			--print("Check: level 11, 5 north, 5 east")
 			--read()
-			if blaze then		-- blaze has rails placed on floor, second floor on top so walls not required
-				clearPerimeter({width = 11, length = 11, up = true, down = true})
-				T:go("F1R1F1L1U1", false, 0, false) -- exit wall, Level 10, facing entry point top right corner
-				-- start in top right corner. border is made of slabs placed up
-				-- fill in floor 9x9 rectangle below	
-				lib.placeFloor(9, 9, "brick") -- ends facing wall on entrance side
-				-- move to starting point in front of spawner,
-				-- outside retaining wall, facing in, and ask for supplies
-				T:go("L1F4 R1U4 F2R2")
-				continue = true -- script continues below for blaze farm
-			else	-- not blaze
-				lib.wallSection() 	-- wall on layers 10,11,12
-				T:go("F1R1F1R2C1R1U1", false, 0, false) -- exit wall, repair behind: Level 10, facing entry point top right corner
-				T:down(1)
-				lib.placeFloor(9, 9, "stone") -- ends facing wall on entrance side
+			lib.wallSection() 	-- wall on layers 10,11,12 or 12,13,14 if blaze
+			T:go("F1R1 F1R2 C1R1 U1", false, 0, false) -- exit wall, repair behind: Level 10, facing entry point top right corner
+			T:down(1)
+			if blaze then
+				lib.placeFloor(9, 9, brick) 			-- place brick floor on level 14
+				T:go("L1F4 R1F2 U4")					-- ends facing out to lower chamber ?below staircase
+				-- now needs to build killzone
+			else
+				lib.placeFloor(9, 9, "stone") 			-- ends facing wall on entrance side
 				T:go("U1R2")
-				lib.placeFloor(9, 9, "stone") -- ends facing wall on opposite side
+				lib.placeFloor(9, 9, "stone") 			-- ends facing wall on opposite side
 				-- return to mid-point front
-				T:go("R2F8 R1F4 L1F2")	-- exit at bottom of dungeon
-				T:go("x1U1x1U1x1U1x1D3R2") -- rise to chest, then return ready for next stage
+				T:go("R2F8 R1F4 L1F2")					-- exit at bottom of dungeon
+				T:go("x1U1 x1U1 x1U1 x1D3 R2") 			-- rise to chest, then return ready for next stage	
+				-- ends with turtle facing spawner, in front of exit hole				
 			end
 		else
 			return
@@ -4947,152 +5103,87 @@ local function createMobFarmCube(R, blaze) -- 61, 62
 	end
 	if continue then
 		T:clear()
-		if R.data ~= "restart" then -- this function has NOT been stopped and restarted
-			local text =
-[[~yellow~Turtle is now ready to build the
-killzone. Items required:
+		local text =
+[[~yellow~Items required to continue:
 
-~lightGray~stone           512     slabs  36
-~orange~powered rail    7       ~yellow~rail   64
-~gray~hopper minecart 1       button 1
-~red~redstone torch  2
+~lightGray~slabs            81
+~orange~nether bricks    88
+~yellow~lava buckets     4
+~brown~chest / barrel   1
+~gray~hopper           1      
 
-~red~WARNING ~yellow~Inventory will be emptied
-of some items if build is continued
+~red~WARNING ~yellow~Inventory ejects items if you
+continue! ~orange~(Choose at next menu.)
 
-~white~Enter for next menu
-]]
-			menu.colourText(nil, text, true)
-			read()
-			pp.itemColours = {colors.red, colors.lime}
-			local choice = menu.new("Choose your option", {"Continue with build", "Re-start later"}, pp, "Type number + Enter") -- 1 = continue, 2= quit
-			if choice == 2 then
-				return {"Blaze spawner partial build halted"}
+~white~Next -> Enter]]
+		menu.colourText(nil, text, true)
+		read()
+		pp.itemColours = {colors.red, colors.lime}
+		local choice = menu.new("Choose your option", {"Continue with build", "Re-start later"}, pp, "Type number + Enter") -- 1 = continue, 2= quit
+		if choice == 1 then
+			choice = menu.new("Choose your option", {"Turtle is above me", "Turtle is below or next to me"}, pp, "Type number + Enter") -- 1 = up, 2= down
+			if choice == 1 then
+				T:emptyInventory("down")
+			else
+				T:emptyInventory("up")
 			end
-			T:sortInventory()
-			T:turnRight(2)
-			T:emptyTrashItem("forward", "minecraft:netherrack", 0)
-			T:emptyTrashItem("forward", brick, 0)
-			T:emptyTrashItem("forward", "fence", 0)
-			T:turnRight(2)
+		else
+			return {"Blaze spawner partial build halted"}
 		end
 		
 		--clsTurtle.getItemSlot(self, item, useDamage): return slotData.lastSlot, slotData.leastModifier, total, slotData
-		T:checkInventoryForItem({"stone"}, {512})
-		T:checkInventoryForItem({"slab"}, {36})
-		T:checkInventoryForItem({"minecraft:powered_rail", "minecraft:golden_rail"}, {8, 8})
-		T:checkInventoryForItem({"minecraft:rail"}, {64})
-		T:checkInventoryForItem({"minecraft:redstone_torch"}, {2})
-		T:checkInventoryForItem({"minecraft:hopper_minecart"}, {1})
-		T:checkInventoryForItem({"minecraft:stone_button"}, {1})
+		T:checkInventoryForItem({brick}, {88})
+		T:checkInventoryForItem({"slab"}, {81})
+		T:checkInventoryForItem({"lava"}, {4})
+		T:checkInventoryForItem({"sign"}, {1})
+		T:checkInventoryForItem({"hopper"}, {1})
+		T:checkInventoryForItem({"chest", "barrel"}, {1, 1})
 		print("Stand clear. Starting in 2 secs")
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		-- return to starting point. rail laid first, bricks placed over rails
-		T:go("F2 L2C1 R1 D3F4 R1")
-		lib.rail("", true, 2) 			-- lay 2 plain rail at start first is later removed but keeps rails in line
-		lib.rail("F1", false, 1) 		-- lay 1 plain rail
-		lib.rail("F1", true, 3) 		-- lay 3 powered rail
-		T:go("L1F1 D1C2 U1")
-		T:place("minecraft:redstone_torch", -1, "down", false) --place redstone torch
-		lib.rail("R2F1L1F1", false, 3)
-		lib.rail("R1F1R1", false, 8)
-		lib.rail("L1F1L1", false, 7)
-		lib.rail("R1F1R1", false, 8)
-		lib.rail("L1F1L1", false, 9)
-		lib.rail("R1F1R1", false, 8)
-		lib.rail("L1F1L1", false, 7)
-		lib.rail("R1F1R1", false, 8)
-		lib.rail("L1F1L1", false, 5) 	-- final strip
-		lib.rail("F1", true, 3)			-- lay 3 powered rail
-		T:go("F1C2 R1F1 R1F1 D1C2 U1")
-		T:place("minecraft:redstone_torch", -1, "down", false)
-		T:go("R2F1L1F1L1U1")
-		-- lay floor 9 x 9 rectangle filling below
-		for i = 2, 10 do -- repeat 9x
-			T:go("m8", false, 0, false, brick)
-			if i < 10 then
-				if i % 2 == 0 then
-					T:go("R1F1R1", false, 0, false, brick)
-				else
-					T:go("L1F1L1", false, 0, false, brick)
-				end
-			end
-		end
-		-- replace first rail with cobble and button
-		T:go("R1F1R2D2x1C1B1", false, 0, false)
-		T:place("minecraft:stone_button", -1, "forward", false)
-		T:go("U2F2L1F1x2")
-		T:place("minecraft:hopper_minecart", -1, "down", false)
-		T:go("L1F1D1R2C1", false, 0, false, brick) -- cover minecart
-		T:go("U1R1F2L1C0F1",false, 0, false)
-		-- place slabs
-		for j = 1, 4 do
-			for i = 1, 9 do
-				T:place("slab", -1, "up", false)
-				T:forward(1)
-			end
-			if j < 4 then
-				T:go("L1C0F1")
-			end
-		end
-		T:go("L1F1L2") -- get in position
-		-- build outer edge
-		for j = 1, 4 do
-			for i = 1, 9 do
-				turtle.back()
-				T:place("stone", -1, "forward", false)
-			end
-			if j < 4 then
-				T:turnLeft(1)
-				turtle.back()
-				T:place("stone", -1, "forward", false)
-			end
-		end
-		T:go("L1F1R2C1L1U1")
-		for j = 1, 4 do
-			for i = 1, 11 do
-				T:go("C0x2F1")
-			end
-			T:go("C0x2R1F1")
-		end
-		T:go("R2F2 R1F1 R1")
-		T:go("R2C1 R2Q14 R1Q14 R1Q14 R1Q13 R1D1", false, 0, false)
-		T:go("L1F1R1")
-		T:go("R2C1R2n14 R1n14 R1n14 R1n13 R1", false, 0, false)	-- now facing in on top of outer walkway
+		-- place upper floor and slabs under it
+		T:go("R2D4F2 L1F4 R1U4")	
+		lib.placeFloor(9, 9, brick) 			-- place brick floor on level 10
+		T:down(2)
+		T:place(brick, 0, "up")
+		T:go("D1R2")
+		lib.ceiling(true)						-- true uses slabs
 		
-		T:go("F1D1C2 R1F1L1") 	-- move next to brick floor, 1 block above
-		T:go("C2F1 C2F3")		-- miss out button, minecart
-		T:go("C2F1 C2F1 C2F2")	-- miss out left redstone torch
-		lib.floorSection(4)
-		lib.floorSection(10)
-		T:go("C2F2")			-- miss out right redstone torch
-		lib.floorSection(8)
-
-		for i = 1, 10 do
-			T:go("C2")
-			if i < 10 then
-				T:forward(1)
-			end
+		-- place lava
+		T:go("L1F4 L1F4 U4")					-- through hole in ceiling
+		T:go("F4 L1F4 R2")
+		for i = 1, 4 do
+			T:place("lava", 0 , "down")
+			T:go("F8 R1")
 		end
-		T:go("F1R1")		-- finished inner square, move onto final path
-
-		lib.floorSection(12)
-		lib.floorSection(12)
-		lib.floorSection(12)
-		for i = 1, 12 do
-			T:go("C2")
-			if i < 12 then
-				T:forward(1)
-			end
+		T:go("F4 R1F4 D2 F1 R2")
+		-- place sign and repair above
+		T:dig("forward")
+		T:place("sign", 0, true, "")
+		T:down(1)
+		T:place(brick, 0 , "up")
+		T:forward(1)
+		-- place blocks under exit hole
+		for i = 1, 4 do
+			T:place(brick, 0 , "forward")
+			T:turnRight(1)
 		end
-		--T:go("U1L1 F1L1 C1U1x0 F1C1U1x0 F1C1U1x0 F1C2 F1C2 F1C2 F1C2 U1L1F1") -- back at original entrance
-		T:go("U1L1 F1L1 F6U1C2 U1x1 L1F1") -- back at original entrance
+		-- place chest and hopper
+		
+		T:go("D2x2")
+		if not T:place("chest", 0, "down") then
+			T:place("barrel", 0, "down")
+		end
+		T:up(1)
+		T:place("hopper", 0, "down")
+		utils.goBack(1)
+		T:place("slab", 0, "forward")
+		T:go("R2F5U3")-- return to starting point and create entrance
 	end
 	return {}
 end
 
 local function floodMobFarm(R) -- 63
-	--[[Part 2 / 3 Mob Spawner Farm turtle on floor, pointing towards water source wall]]
+	--[[Part 2 / 3 Mob Spawner Farm turtle on floor, pointing towards water source wall, single hole]]
 	local lib ={}
 	
 	function lib.setPosition(addWater)
@@ -5101,16 +5192,16 @@ local function floodMobFarm(R) -- 63
 		T:go("U1L1")
 		while turtle.forward() do end					-- move forward until hit left wall
 		if addWater then
-			T:place("water", -1, "down", true) 			-- place water down
+			T:placeWater("down") 			 			-- place water down
 		end
 		T:turnLeft(2)									-- turn round
 		while turtle.forward() do
 			width = width + 1 
 		end			-- go forward 7
 		if addWater then								-- back 1
-			T:place("water", -1, "down", true) 			-- place water					
+			T:placeWater("down") 						-- place water					
 		end
-		T:go("L2F".. math.floor(width / 2) .."L1")	-- turn round, go forward 3 (centre of wall), turn left
+		T:go("L2F".. math.floor(width / 2) .."L1")		-- turn round, go forward 3 (centre of wall), turn left
 	end
 
 	function lib.digFloor()
@@ -5169,7 +5260,7 @@ local function floodMobFarm(R) -- 63
 		utils.goBack(4)
 		T:go("R1U1")
 		lib.setPosition(true)		-- place water sources
-		T:go("F8D2F1C2F1")
+		T:go("F8D2 F1C2C0 F1")		-- exit leaving single hole in wall, facing away from spawner
 	end
 	
 	return {}
@@ -5179,145 +5270,187 @@ local function createMobBubbleLift(R) -- 64
 	-- Part 3 / 3 Mob Spawner Farm
 	-- R.subChoice = 1 or 2 (left/right)
 	local lib = {}
-		
-	function lib.down()
-		local moves = 0
-		while turtle.down() do
-			moves = moves + 1
+	
+	function lib.initialise()
+		local blockType = T:getBlockType("down")
+		if blockType ~= "minecraft:soul_sand" then
+			T:dig("down")
+			if not T:place("minecraft:soul_sand", -1, "down", false) then
+				return {"Unable to find or place soulsand."}
+			end
 		end
-		return moves
+		-- check facing sign, rotate if not
+		blockType = T:getBlockType("forward")
+		local turns = 0
+		while blockType:find("sign") == nil do
+			T:turnRight(1)
+			turns = turns + 1
+			if turns == 4 then
+				return {"Unable to find sign."}
+			end
+			blockType = T:getBlockType("forward")
+		end
+		return {""}
+	end
+	
+	function lib.createWaterSource(oTurn)
+		T:go(oTurn.."1") 			-- turn to opposite side of dropzone
+		T:go("F1x0D1")
+		for i = 1, 3 do
+			T:go("C2 L1C1 R2C1 L1")
+			if i < 3 then
+				T:go("F1x0")
+			end
+		end
+		T:go("R2F1") 				-- face column move to middle
+		T:placeWater("forward")
+		T:go("R2")					-- face away
+		T:placeWater("forward")
+		T:go("U1x0 R2F1x0 F1x0"..oTurn.."1")	-- face column, return to soul sand, face spawner
+	end
+	
+	function lib.goToWater(moves)
+		T:down(moves)
+		T:getWater("down")
+		sleep(0.1)
+		T:getWater("down")
+	end
+	
+	function lib.placeCollector(turn, oTurn)
+		local hopperSlot = T:getItemSlot("hopper")
+		local chestSlot = T:getItemSlot("chest")
+		if hopperSlot > 0 and chestSlot > 0 then
+			T:dig("down")
+			T:place("chest", 0, "down")
+			T:go(turn.."1F1"..oTurn.."1")
+			T:dig("down")
+			T:place("chest", 0, "down")
+			T:go(turn.."1")
+			utils.goBack(3)
+			T:go("D1x1")
+			T:place("hopper", 0, "forward")
+			T:go("U1C2F2"..oTurn.."1")
+		end
 	end
 	
 	function lib.up()
 		local moves = 0
-		while turtle.up() do
+		while turtle.detect() do
+			turtle.up()
 			moves = moves + 1
 		end
+
 		return moves
 	end
-	-- check if dirt or soulsand below
+	
+	function lib.createChamber()
+		local D = {}
+		D.width  = 4
+		D.length = 7
+		D.height = 4
+		D.ceiling = true
+		D.floor = true
+		D.vDirection = "D"
+		D.hDirection = "RL"
+		D.goHome = true
+
+		utils.createWalledSpace(D)
+	end
+	
+	function lib.mobTransporter()
+		for i = 1, 9 do -- fill in a solid block bar from bubble column for 8 spaces
+			T:go("F1C0C2 R1C1 R1C1 R1C1 R1C1")
+		end
+		T:go("D1C2C1 R1C1 R2C1 L1 C0x0") -- move down column
+		for i = 1, 8 do -- go under solid block bar
+			T:go("F1C2 R1C1 L2C1 R1x0")
+		end
+	end
+	
 	local turn = "R"
+	local oTurn = "L"
 	if R.subChoice == 1 then
 		turn = "L"
+		oTurn = "R"
 	end
-	local blockType = T:getBlockType("down")
-	if blockType ~= "minecraft:soul_sand" then
-		T:dig("down")
-		if not T:place("minecraft:soul_sand", -1, "down", false) then
-			return {"Unable to find or place soulsand."}
-		end
+	
+	local data = lib.initialise()			-- check if in the right position
+	if data[1] ~= "" then
+		return data 						-- eg {"Unable to find sign."}
 	end
-	-- check facing sign, rotate if not
-	blockType = T:getBlockType("forward")
-	local turns = 0
-	while blockType:find("sign") == nil do
-		T:turnRight(1)
-		turns = turns + 1
-		if turns == 4 then
-			return {"Unable to find sign."}
-		end
-		blockType = T:getBlockType("forward")
+	lib.createWaterSource(oTurn)			-- everything in place, build a water source, facing spawner
+	for i = 1, 3 do		-- fill in back and one side, go up
+		T:go(turn.."1C1"..turn.."1C1"..turn.."1x1"..turn.."1U1", false, 0, true)
 	end
-	for i = 1, 3 do
-		-- fill in back and one side, go up
-		if turn == "R" then
-			T:go("R1C1R1C1R1x1R1U1", false, 0, true)
-		else
-			T:go("L1C1L1C1L1x1L1U1", false, 0, true)
-		end
+	-- dungeon wall, above mob exit, facing spawner
+	local colHeight = 19
+	for i = 1, colHeight do		-- tunnel up, filling 3 sides
+		T:go(turn.."1C1"..turn.."1C1"..turn.."1x1"..turn.."1C1 U1", false, 0, true)
 	end
-	for i = 1, 17 do
-		-- tunnel up, filling 3 sides
-		if turn == "R" then
-			T:go("R1C1R1C1R1x1R1C1U1", false, 0, true)
-		else
-			T:go("L1C1L1C1L1x1L1C1U1", false, 0, true)
-		end
-	end
-	-- move either left/right 8 blocks, repairing ceiling and sides
-	if turn == "R" then
-		T:go("C0R2C1R1F1C0C1R1C1R2C1L1F1A8", false, 0, true) -- fill top of column
-	else
-		T:go("C0L2C1L1F1C0C1L1C1L2C1R1F1A8", false, 0, true) -- fill top of column
-	end
-	-- turn round, go down 1, forward 7 blocks repairing bottom and sides
-	T:go("D1C1R2X7", false, 0, true)
-	-- turn round, go up, place cobble, forward 4, place cobble
-	T:go("R2U1C2F4C2", false, 0, true)
-	-- turn round forward 1 place water, forward 2, place water
-	T:go("R2F1", false, 0, true)
-	T:place("minecraft:water_bucket", -1, "down", false)
-	T:forward(2)
-	T:place("minecraft:water_bucket", -1, "down", false)
-	T:go("R2F1")
+	-- facing spawner 20 blocks up. move either left/right 8 blocks, repairing ceiling and sides
+	T:go("C0"..turn.."2C1"..turn.."1F1 C0C1"..turn.."1C1"..turn.."2C1"..oTurn.."1", false, 0, true) -- fill top of column
+	
+	lib.mobTransporter()
+	T:go("x2x0 F1x2x0 F1x2x0 R2") -- over water source
+	-- now create bubble column
+	T:down(colHeight + 2)
+	local moves = 0
 	repeat
-		-- refill both buckets
-		T:place("minecraft:bucket", -1, "down", false)
-		sleep(0.5)
-		T:place("minecraft:bucket", -1, "down", false)
-		-- back 4, down to solid, place water,
-		for i = 1, 4 do
-			turtle.back()
-		end
-		local moves = lib.down() -- returns no of blocks descent 0 to 19
-		if moves > 0 then
-			T:place("minecraft:water_bucket", -1, "forward", false)
-			T:go("U1C2")
-			if moves > 1 then
-				T:place("minecraft:water_bucket", -1, "forward", false)
-				T:go("U1C2")
-			end
-		end
-		lib.up() -- 0 - 19
-		T:forward(4)
-	until moves <= 1
-	-- delete water sources and remove cobble
-	T:go("R2F3C1R2F1")
-	for i = 1, 7 do -- go to end of run placing cobble
-		T:go("C2F1")
-	end
-	T:turnRight(2)
-	for i = 1, 7 do -- go to end of run, down 2
-		T:go("x2F1x2")
-	end
-	T:go("R2F7D2")
-	for i = 1, 18 do
+		lib.goToWater(moves)	-- get water
+		moves = lib.up()
+		T:go("F1")
+		T:placeWater("forward")
+		T:go("U1C2")
+		T:placeWater("forward")
+		utils.goBack(1)
+		T:go("C1")
+		moves = moves + 1
+	until moves >= colHeight + 1
+	lib.goToWater(moves)	-- get water for last time
+	lib.up()				-- finishes above lower part of the transport bar
+	T:go("F2R2C1D1")		-- seal off bubble column
+	utils.goBack(1)
+	T:placeWater("forward")	-- place source on top of bubble column
+	utils.goBack(7)			-- over down shaft
+	T:down(1)				-- start shaft, facing bubble column
+	for i = 1, 17 do
 		-- tunnel down, filling all 4 sides
-		T:go("R1C1R1C1R1C1R1C1D1", false, 0, true)
+		T:go("R1C1 R1C1 R1C1 R1C1 D1", false, 0, true)
 	end
-	-- block below, turn round, tunnel forward 6 blocks
-	T:go("C2R2U1")
+	lib.createChamber()
+	T:go("x0")
+	T:go(oTurn.."1C1".. turn.."1D1C2"..oTurn.."1C1"..turn.."1F1".. oTurn.."1F1"..oTurn.."1") -- facing end wall ready to place slabs
 	for i = 1, 6 do
-		T:go("R1C1L2C1R1")
-		if i < 6 then
-			T:forward(1)
+		T:place("slab", 0, "down")
+		if i == 6 then
+			T:go(oTurn.."1")
 		end
+		utils.goBack(1)
+		T:go("C1")
 	end
-	T:go("R2D1") -- drop down return to far wall
-	for i = 1, 6 do	-- leave opening for player attack
-		if turn == "R" then
-			T:go("L1C1R2x1L1")
-		else
-			T:go("R1C1L2x1R1")
-		end
-		if i < 6 then
-			T:forward(1)
-		end
-	end
-	T:go("R2F1 D1C2 R1C1 L2C1 R1U1")
-	T:place("water", -1, "down")
-	T:go("F1D1")
+	
+	T:go("D2F2"..turn.."1F5")
+	T:placeWater("forward")
+	T:go(turn.."1F1"..oTurn.."1") -- facing down mob channel floor
 	for i = 1, 5 do
-		T:go("C2R1C1L2C1R1")
-		if i < 5 then
+		T:go("C1")
+		utils.goBack(1)
+	end
+	T:go("C1"..turn.."1F1"..turn.."1F1")
+	for i = 1, 7 do
+		T:go("C2x0")
+		if i < 7 then
 			T:forward(1)
 		end
 	end
-	if turn == "R" then
-		T:go("L1F1C2F1C2U1R1")
-	else
-		T:go("R1F1C2F1C2U1L1")
+	T:go("U3R2")
+	for i = 1, 7 do
+		T:go("F1x2")
 	end
+	T:go("D3")
+	
+	lib.placeCollector(turn, oTurn) -- if hopper / chests present
+	
 	return {}
 end
 
@@ -5392,7 +5525,7 @@ local function createPortal(R) -- 42
 	local out = true
 	for width = 1, R.width do
 		lib.buildBase()
-		for i = 1, R.height - 1 do
+		for i = 1, R.height - 2 do
 			T:go("R2U1")
 			out = not out
 			lib.buildLayer()
@@ -5407,7 +5540,10 @@ local function createPortal(R) -- 42
 			T:go("R1F1D"..R.height.."R1")
 			out = true
 		else
-			T:go("L1F"..R.width.."D"..R.height.."R2")
+			T:go("L1F"..R.width.."D"..R.height - 1 .."R2")
+			if R.data ~= "bury" then
+				T:down(1)
+			end
 		end
 	end
 	
@@ -5499,6 +5635,7 @@ end
 
 local function createRailway(R) -- 93
 	-- go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
+	--[[Build steps up or down ready for railtrack]]
 	if R.down then
 		if R.height == 0 then
 			local blockType = ""
@@ -5511,12 +5648,12 @@ local function createRailway(R) -- 93
 			end
 		else
 			for i = 1, R.height - 1 do
-				T:go("F1D1C2", false, 0, false)
+				T:go("U1x0 D1x1 F1x0x1 D1x1 C2", false, 0, false)
 			end
 		end
 	elseif R.up then
 		for i = 1, R.height do
-			T:go("C1U1F1", false, 0, false)
+			T:go("C1U2 x0D1F1", false, 0, false) --put stone in front, up 2 excavate 1, down 1, forward 1
 		end
 	end
 	return {}
@@ -5874,7 +6011,7 @@ local function createSafeDrop(R) -- 14
 	if not isBedrock then -- not sitting on bedrock, so break foot level exit block
 		T:go("U1R2x1")
 	end
-	T:place("minecraft:water_bucket", -1, "down", false)
+	T:placeWater("down")
 	if isBedrock then
 		T:go("U1x1 U1x1")
 	else
@@ -5933,12 +6070,12 @@ local function createSlopingWater(R) -- 34, 89
 	else
 		T:go("R1F"..R.width - 1 .."R1")
 	end
-	T:place("water", -1, "up", true) -- place in corner
+	T:placeWater("up")  -- place in corner
 	local move = true
 	while move do
 		move = turtle.forward()
 		move = turtle.forward() -- false if at end of run
-		T:place("water", -1, "up", true) -- alternate positions + end of run
+		T:placeWater("up")  -- alternate positions + end of run
 	end
 	T:go("R2D1")
 	T:sortInventory() -- get all buckets into 1 slot
@@ -6280,11 +6417,96 @@ local function createStaircase(R) -- 13
 	return{"Staircase completed"}
 end
 
+local function createStripMine(R)
+	--[[
+	R.length should be a multiple of 16
+	mine a corridoor repairing floor and ceiling
+	check sides, remove valuable items
+	plug if lava present
+	Every 16 blocks dig a side passage 1 block deep 2 blocks long
+	]]
+	local lib = {}
+	
+	function lib.seal(R)	
+		if T:isValuable("forward") then	-- valuable block in front. If debris then refuse already dumped
+			T:dig("forward")
+		end
+		local blockType = T:getBlockType("forward")
+		if blockType:find("lava") ~= nil then
+			--T:place("stone", 0, "forward", false) -- place does not allow for specific blocktype
+			T:go("C1", false, 0, false, R.useBlockType)
+			return true
+		end
+		
+		return false
+	end
+	
+	function lib.checkSeal(R)
+		local retValue = false
+		T:turnRight(1)
+		if lib.seal(R) then
+			retValue = true
+		end
+		T:turnLeft(2)
+		if lib.seal(R) then
+			retValue = true
+		end
+		T:turnRight(1)
+		return retValue
+	end
+		
+	function lib.alcove(R)
+		-- right side, starting at ceiling
+		T:go("R1F1 C0", false, 0, false, R.useBlockType)-- stone ceiling, facing alcove wall (upper)
+		lib.seal(R)										-- seal alcove wall (upper)	
+		T:go("D1C2", false, 0, false, "cobble")			-- cobble floor, facing alcove wall (lower)	
+		lib.seal(R)										-- seal alcove wall (lower)		
+		T:go("L2 F1")									-- down 1, turn round, return to corridoor.
+		-- left side	
+		T:go("F1 C2", false, 0, false, "cobble")		-- cobble floor, facing alcove wall (lower)	
+		lib.seal(R)										-- seal alcove wall (lower)
+		T:go("U1 C0", false, 0, false, R.useBlockType)	-- stone ceiling, still facing alcove wall
+		lib.seal(R)										-- seal alcove wall (upper)						
+		T:go("L2F1L1")									-- return to corridoor at ceiling position
+		lib.placeTorch(R)								
+	end
+	
+	function lib.placeTorch(R)
+		if R.torchInterval > 0 then 					-- torches onboard
+			if T:getItemSlot("minecraft:torch") > 0 then
+				T:place("minecraft:torch", -1, "down")
+			end
+		end
+	end
+	
+	local seal = false
+	if T:getItemSlot("minecraft:torch") == 0 then
+		R.torchInterval = 0 -- set to default 16 above
+	end
+	for steps = 1, R.length do
+		-- go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
+		T:go("C2U1C0", false, 0, true, R.useBlockType)		-- check and repair floor / ceiling
+		if steps % 16 == 0 or steps % 16 == 1 then
+			lib.alcove(R) -- enter and exit at ceiling position
+		else
+			seal = lib.checkSeal(R)
+		end
+		T:go("F1D1", false, 0, true)
+		seal = lib.checkSeal(R)
+	end
+	if seal then -- water or lava found while tunnelling
+		T:go("U1C0", false, 0, true, R.useBlockType)
+		lib.checkSeal(R)
+		T:go("C1", false, 0, true, R.useBlockType)
+		T:down(1)
+	end
+	return {}
+end
+
 local function createTreefarm(R) -- 22
 	local lib = {}
 	--go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
 	function lib.buildWallSection(length, placePolished, useBlockType)
-		useBlockType = useBlockType or ""
 		for i = 1, length do
 			if placePolished and i == length - 4 then
 				T:place("polished", 0, "down")
@@ -6307,7 +6529,7 @@ local function createTreefarm(R) -- 22
 	end
 	
 	function lib.placeWater(length)
-		T:place("water", 0, "down")
+		T:placeWater("down") 
 		T:go("F"..length.."R1")
 	end
 	
@@ -6339,7 +6561,7 @@ local function createTreefarm(R) -- 22
 	-- R.data = "existing" if on existing tree farm
 	-- R.up = true if clear area
 	if R.up then
-		clearArea(R, false)
+		clearArea(R)
 	end
 
 	if R.data == "existing" then
@@ -6412,7 +6634,7 @@ local function createTreefarm(R) -- 22
 	lib.placeWater(R.width - 3)
 	T:go("F".. math.floor((R.length - 2) / 2).."R1F".. math.floor((R.width - 2) / 2)) -- should be in centre
 	T:go("D4C2 R1C1 R1C1 R1C1 R1F1 R2") -- facing back of hole ready to place water
-	T:place("water", 0, "forward")
+	T:placeWater("forward") 
 	T:go("R2F7U4")
 	
 	return {"Tree farm ready for planting"}
@@ -6436,7 +6658,7 @@ local function createWallOrFence(R)
 		T:up(1)
 		local up = 1
 		local blockType = T:getBlockType("forward")
-		while blockType:find(R.useBlockType) ~= nil do
+		while blockType:find(R.useBlockType) ~= nil and blockType ~= "" do -- prevent continuous upward travel
 			T:up(1)
 			up = up + 1
 			blockType = T:getBlockType("forward")
@@ -6513,36 +6735,184 @@ local function createWallOrFence(R)
 end
 
 local function createWaterCanal(R) -- 53
-	-- designed for 4 turtles, but can be done with 1-3 as well
-	-- R.subChoice = 1:towpath, optional torches, 2:water canal
+	--[[
+	designed for 4 turtles, but can be done with 2 as well
+	R.data = 1 (2 turtles) or 2 (4 turtles)
+	R.height = 0 (in water/ on canal floor) or 1 (at ground level)
+	R.side = "R" or "L"
+	R.subChoice =
+		1 = left side, ground level (on towpath)
+		2 = left side above canal water (new canal only)
+		3 = right side above canal water (new canal only)
+		4 = right side, ground level (on towpath)
+		5 = left side in canal water (if present)
+		6 = right side in canal water (if present)
+	
+	if R.height = 0 then already at correct height on canal floor
+		check block below, block to left and block above, move forward tunnelling
+		if entering water then move up, onto canal wall and continue pathway
+		if tunnelling then flood canal
+	else R.height = 1 then above water and on path across
+		move forward, checking for water below
+		if water finishes, move into canal, drop down and continue tunnelling
+	]]
 	local lib = {}
 	
-	function lib.waterCanalTowpath(R, maxLength)
-		local torch = R.length - maxLength					-- start torch count at 1-2 depending on lib.initialise()
-		local numBlocks = 0									-- distance travelled
-		while numBlocks < maxLength do						-- loop from here. Facing forwards to extend canal
-			T:go("x0C2", false, 0, false)
-			if R.torchInterval > 0 then
-				if numBlocks == 0 or torch == R.torchInterval then
-					T:up(1)
-					T:place("torch", -1, "down", false)
-					if numBlocks < maxLength then
-						T:go("F1D1C2", false, 0, false)
-						numBlocks = numBlocks + 1		
-					else
-						return
-					end
-					torch = 0
-				end
-			end
-			T:forward(1)
-			torch = torch + 1								-- increase torch spacing interval
-			numBlocks = numBlocks + 1						-- inrease block count
-		end
-		T:dig("up")
+	function lib.newCanalSide(oTurn)
+		T:go("C1 U1x1 U1x1 D2"..oTurn.."1", false, 0, false)
 	end
 	
-	function lib.waterCanal(R, maxLength)
+	function lib.newCanalBase(R)
+		local oTurn = "R"								-- assume R.side = "L"
+		if R.side == "R" then
+			oTurn = "L"
+		end
+		if not turtle.detectDown() then					-- air / water below: fill floor
+			T:go(oTurn.."1D1")							-- *|>| | | to *|V| | | turn towards canal centre, go down ready to repair neighbouring canal base 
+			if T:getBlockType("forward"):find("turtle") ~= nil then -- turtle in similar position
+				if R.side == "L" then					-- only left side repairs, so wait 1 second
+					sleep(1)
+					T:go("C1")							-- repair neighbouring canal base
+				end
+			else
+				T:go("C1")								-- repair neighbouring canal base
+			end
+			T:go(R.side.."1")							-- *|V| | | to *|>| | | turn to face start 
+			T:up(1)										-- *|>| | | return to canal floor 
+		end
+		T:go("C2", false, 0, false)
+	end
+	
+	function lib.newCanal(R)
+		--  no source in front as this function called												-- *|<| | |  facing end wall ready for new canal canal base level
+		local oTurn = "R"									-- assume R.side = "L"
+		if R.side == "R" then
+			oTurn = "L"
+		end
+		lib.newCanalSide(oTurn)								-- *|<| | | wall fixed. to -- *|^| | | 
+		lib.newCanalSide(oTurn)								-- *|^| | | wall fixed. to -- *|>| | | 
+		lib.newCanalBase(R)									-- *|>| | | base fixed
+		T:go("F1"..R.side.."1") 							-- *|>| | | to *| |>| | to *| |^| |
+		lib.newCanalSide(oTurn)								-- *| |^| | to *| |>| |
+		lib.newCanalBase(R)									-- *| |>| | base fixed
+		T:go("F1"..R.side.."1") 							-- *| |>| | to *| | |>| to *| | |^|
+		lib.newCanalSide(oTurn)								-- *| | |^| to *| | |>|
+		lib.newCanalBase(R)									-- *| | |>| base fixed
+		T:go(R.side.."2") 									-- *| | |>| to *| | |<|facing existing / back wall 
+		T:forward(1)										-- *| |<| |
+		T:placeWater("forward") 							-- *|W|<| | placed against start wall  
+		T:go("L2")											-- *|W|>| |
+		T:placeWater("forward") 							-- *|W|>|W| placed direction of travel 
+		T:go("R2") 											-- *|W|<|W| rotate
+		if deletesWater then
+			T:up(1)
+		else
+			sleep(0.2)
+		end
+		utils.getWater()									-- *|W|<|W| 
+		T:go(oTurn.."2F1")									-- *|W|<|W|  to *|W|W|>|  ready to go	
+	end
+	
+	function lib.towpathOnly(R)
+		--[[single turtle on towpath only using 4 turtles. Starts at ground level]]
+		for i = 1, R.length do
+			if turtle.detectDown() then						-- eg dirt, stone
+				T:dig("down")								-- remove block below
+			end
+			local placeOnly = true
+			if R.torchInterval > 0 then						-- place torches
+				if i == 1 or i % R.torchInterval == 0 then	-- ready to place torch
+					T:go("C2U1")							-- place solid block below, up 1
+					T:place("torch", 0, "down")				-- place torch, move forward
+					T:go("F1D1")							-- move forward, down
+					placeOnly = false		
+				end
+			end
+			if placeOnly then
+				T:dig("up")									-- clear blocks above
+				if not T:place("stone", 0, "down") then		-- place stone below
+					break
+				end
+				if i < R.length then
+					T:forward(1)							-- move forward
+				end							
+			end
+		end
+	end
+	
+	function lib.initialiseCanal(R)
+		--[[ move turtle to correct position. return moves]]
+		local moves = 1
+		local oTurn = "R"
+		if R.side == "R" then
+			oTurn = "L"
+		end
+		local newCanal, isWater, isSource = false, false, false
+		if R.data == 1 then -- use 2 turtles only
+			if R.subChoice == 1 or R.subChoice == 4 then 	-- left / right side on towpath- move into canal space
+				if deletesWater then
+					T:go(oTurn.."1F1")						-- turn to face canal centre, go forward over water
+					isWater, isSource = T:isWater("down")
+					if isSource then 						-- canal already exists
+						T:go(oTurn.."1")					-- stay above water, face existing canal
+					else									-- NOT above source
+						T:go("D1"..oTurn.."1")				-- go to canal floor, face existing
+						newCanal = true						-- flag create 6 water source blocks
+					end
+				else										-- NOT deletesWater
+					T:go(oTurn.."1F1D1"..oTurn.."1") 		-- move into canal, face back along any existing canal
+					isWater, isSource = T:isWater("forward")
+					if isSource then
+						T:go(R.side.."2") 					-- face forward for new canal
+					else
+						newCanal = true
+					end
+				end
+			elseif R.subChoice == 2 or R.subChoice == 3 then-- left / right side above canal finishing pos if deletesWater
+				if deletesWater then
+					isWater, isSource = T:isWater("down")
+					if isSource then 
+						T:go(R.side.."2")					-- face towards existing canal
+					else
+						T:go("D1"..R.side.."2")				-- go down and face existing canal		 				-- no water ahead
+						newCanal = true						-- already in newCanal starting position
+					end
+				else										-- NOT deletesWater
+					T:go("D1"..R.side.."2")					-- facing existing on canal floor
+					isWater, isSource = T:isWater("forward")
+					if isSource then						-- water ahead
+						T:go(R.side.."2")					-- face forward for new canal
+					else 									
+						newCanal = true
+					end
+				end
+			elseif R.subChoice == 5 or R.subChoice == 6 then -- left / right  side in canal base. Assume NOT deletesWater
+				T:go(R.side.."2") 							-- check if water behind	
+				isWater, isSource = T:isWater("forward")
+				if isSource then
+					T:go(oTurn.."2") 	
+				else
+					newCanal = true
+				end
+			end
+		else	-- use 4 turtles
+			if R.subChoice == 1 or R.subChoice == 4 then 	-- left / right side on towpath stays in place for 4 part canal
+			
+			elseif R.subChoice == 2 or R.subChoice == 3 then-- left / right side above canal finishing pos if deletesWater
+			
+			elseif R.subChoice == 5 or R.subChoice == 6 then -- left / right  side in canal base. Assume NOT deletesWater
+			
+			end
+		end
+		if newCanal then 								-- no water ahead, facing start wall of new canal *|<| | |
+			lib.newCanal(R) 							-- start new canal, finish facing new canal 6 block water sources
+			moves = 2
+		end
+		
+		return moves 									-- facing forward ready for new canal *|>| | |
+	end
+	
+	function lib.side(R, maxLength)
 		-- Already in position facing new canal, 2 water buckets
 		local torch = R.length - maxLength					-- start torch count at 1-2 depending on lib.initialise()
 		local sourceCount = 0								-- allow for 1 iteration of placing source blocks when changing from solid to water
@@ -6564,7 +6934,125 @@ local function createWaterCanal(R) -- 53
 				else										
 					T:down(1)								-- down to canal floor
 					sourceCount = 0							-- reset
-					T:go("C2", false, 0, false)								-- place block below
+					T:go("C2", false, 0, false)				-- place block below
+					T:up(1)									-- up to water level
+				end											-- still facing away from canal
+				T:go(R.side.."1F1C2", false, 0, false) 		-- go above towpath, place stone down, facing out
+				if turtle.detectUp() then 					-- ? block above
+					T:go(R.side.."2U1F1D1"..R.side.."2")	-- rotate to face canal, up 1 forward over canal, back down to water level, face towpath
+				else
+					utils.goBack(1)							-- face towpath
+				end
+				-- facing towpath
+				if R.torchInterval > 0 then					-- Are torches required?
+					if torch == R.torchInterval  or numBlocks == 0 then		-- check if ready to place
+						torch = 0							-- reset interval counter
+						T:go("U1F1")
+						T:place("torch", -1, "down")		-- place torch
+						utils.goBack(1)
+						T:down(1)
+					end
+				end											-- facing towpath, above water
+				-- facing towpath
+				if isSource and scoreCount > 0 then
+					T:go(oTurn.."1x0")						-- face new canal direction
+				else										-- not source below, or first time found, ensures continous canal
+					T:go(R.side.."1x0")						-- face back to existing canal
+					T:placeWater("down")					-- place water
+					T:forward(1)							-- forward 1
+					T:placeWater("down")					-- place water
+					utils.getWater() 							-- collects water from below
+					utils.goBack(1) 						-- back 1
+					T:go(oTurn.."1x0")						-- face new canal
+				end
+			else
+				T:forward(1) 								-- move forward to extend canal
+				_, isSource = T:isWater("forward")			-- check if source water ahead
+				if isSource then							-- ? source ahead
+					sourceCount = sourceCount + 1
+				else
+					sourceCount = 0
+					if not turtle.detectDown() then			-- air / water below, but no source in front, so fill it
+						T:go(oTurn.."1D1")					-- ready to repair neighbouring canal base
+						if T:getBlockType("forward"):find("turtle") ~= nil then -- turtle in similar position
+							if R.side == "L" then			-- only left side repairs, so wait 1 second
+								sleep(1)
+								T:go("C1")					-- repair neighbouring canal base
+							end
+							T:go(R.side.."1")				-- face forward
+						else
+							T:go("C1"..R.side.."1")			-- repair neighbouring canal base if air
+						end
+						T:up(1)
+					end
+					T:go("C2", false, 0, false)				-- place block below if not already source
+				end
+				T:go(R.side.."1C1", false, 0, false) 		-- face canal wall, replace with stone
+				
+				local placeTorch = false
+				if R.torchInterval > 0 then					-- Are torches required?
+					if torch == R.torchInterval  or numBlocks == 0 then		-- check if ready to place
+						torch = 0							-- reset interval counter
+						placeTorch = true
+					end
+				end
+				if (isSource and placeTorch) or not isSource then
+					T:go("U1x1 U1x1")						-- up 2 and excavate blocks above tow path
+					if placeTorch then						-- torch required
+						T:forward(1)						-- move over towpath
+						T:place("torch", -1, "down")		-- place torch
+						utils.goBack(1)						-- move back
+					end
+					T:down(2)								-- return to canal base
+				end
+				if isSource and sourceCount > 1 then 		-- source ahead found at least once
+					T:go(oTurn.."1")						-- face newcanal as no water refill required
+				else										-- not source in front, or first time found, ensures continous canal
+					T:go(oTurn.."1C1") 						-- *| | | |>| face along new canal and block entrance
+					utils.goBack(1)							-- *| | |>| | back 1
+					T:placeWater("forward")					-- *| | |>|W| place water
+					T:go(oTurn.."2") 						-- *| | |<|W| face existing canal 
+					_, isSource = T:isWater("forward")		-- *| |?|<|W| check if source water ahead 
+					if not isSource then
+						if not T:placeWater("forward") then	-- place water again *| |W|<|W|
+							while not T:getWater("forward") do -- wait for other turtle
+								print("Out of water buckets")
+								sleep(1)
+							end
+							sleep(0.2)
+							T:getWater("forward") 
+						end
+					end
+					utils.getWater() 							-- collects water *| |W|<|W|
+					T:go(R.side.."2F1") 						-- face along new canal *| |W|>|W| to *| |W|W|>|
+				end
+			end
+		end
+	end
+		
+	function lib.waterOnly(R, maxLength)
+		-- Already in position facing new canal, 2 water buckets
+		local torch = R.length - maxLength					-- start torch count at 1-2 depending on lib.initialise()
+		local sourceCount = 0								-- allow for 1 iteration of placing source blocks when changing from solid to water
+		local numBlocks = 0									-- distance travelled
+		local _, isSource = nil, false						-- initialise variables
+		local oTurn = "R"									-- assume R.side == "L" -> oTurn = "R"
+		if R.side == "R" then								-- R.side = "R"
+			oTurn = "L"										-- oTurn = "L"
+		end
+		
+		while numBlocks < maxLength do						-- loop from here. Facing forwards to extend canal
+			torch = torch + 1								-- increase torch spacing interval
+			numBlocks = numBlocks + 1						-- inrease block count
+			if deletesWater then							-- up to and including mc 1.12.2
+				T:forward(1)								-- move forward to extend canal  | |>|
+				_, isSource = T:isWater("down")				-- check if source water below
+				if isSource then
+					sourceCount = sourceCount + 1			-- count source blocks
+				else										
+					T:down(1)								-- down to canal floor
+					sourceCount = 0							-- reset
+					T:go("C2", false, 0, false)				-- place block below
 					T:up(1)									-- up to water level
 				end											-- still facing away from canal
 				if turtle.detectUp() then 					-- ? block above
@@ -6572,10 +7060,10 @@ local function createWaterCanal(R) -- 53
 				end
 				if not isSource or scoreCount == 0 then		-- not source below, or first time found, ensures continous canal
 					T:go(R.side.."2x0")						-- face back to existing canal
-					T:place("water_bucket", -1, "down")		-- place water
+					T:placeWater("down")					-- place water
 					T:forward(1)							-- forward 1
-					T:place("water_bucket", -1, "down")		-- place water
-					utils.getWater() 							-- collects water from below
+					T:placeWater("down")					-- place water
+					utils.getWater() 						-- collects water from below
 					utils.goBack(1) 						-- back 1
 					T:go(R.side.."2")						-- face new canal
 				end
@@ -6591,7 +7079,7 @@ local function createWaterCanal(R) -- 53
 						if T:getBlockType("forward"):find("turtle") ~= nil then -- turtle in similar position
 							if R.side == "L" then			-- only left side repairs, so wait 1 second
 								sleep(1)
-								T:go("C1", false, 0, true)					-- repair neighbouring canal base
+								T:go("C1", false, 0, true)	-- repair neighbouring canal base
 							end
 							T:go(R.side.."1")				-- face forward
 						else
@@ -6601,41 +7089,49 @@ local function createWaterCanal(R) -- 53
 					end
 					T:go("C2", false, 0, false)				-- place block below if not already source
 				end
+				if not isSource then
+					T:go("U1x0D1")							-- up 1 and excavate blocks above canal. return to canal base
+				end
 				T:go(R.side.."1C1"..oTurn.."1", false, 0, true) -- face canal wall, replace with stone if empty, face forward										
 				if not isSource	and sourceCount == 0 then	-- not source in front, or first time found, ensures continous canal					
 					T:go("C1", false, 0, true) 				-- *| | | |>| face along new canal and block entrance
 					utils.goBack(1)							-- *| | |>| | back 1
-					T:place("water_bucket", -1, "forward")	-- *| | |>|W| place water
+					T:placeWater("forward")					-- *| | |>|W| place water
 					T:go(oTurn.."2") 						-- *| | |<|W| face existing canal 
 					_, isSource = T:isWater("forward")		-- *| |?|<|W| check if source water ahead 
 					if not isSource then
-						if not T:place("water_bucket", -1, "forward") then	-- place water again *| |W|<|W|
-							while not T:place("bucket", -1, "forward") do -- wait for other turtle
+						if not T:placeWater("forward") then	-- place water again *| |W|<|W|
+							while not T:getWater("forward") do -- wait for other turtle
 								print("Out of water buckets")
 								sleep(1)
 							end
 							sleep(0.2)
-							T:place("bucket", -1, "forward") 
+							T:placeWater("forward") 
 						end
 					end
-					utils.getWater() 							-- collects water *| |W|<|W|
+					utils.getWater() 							-- collects 2 water *| |W|<|W|
 					T:go(R.side.."2F1") 						-- face along new canal *| |W|>|W| to *| |W|W|>|
 				end
 			end
 		end
 	end
 		
-	local maxLength = 1024
+	local maxLength = 512
 	if R.length ~= 0 then
 		maxLength = R.length
 	end
 	menu.clear()
 	menu.colourWrite("Building canal "..R.side.." side", colors.yellow, nil, nil, false, true)
-	local moves = utils.initialiseCanal(R) -- move to correct position and/or start new canal
-	if R.subChoice == 1 or R.subChoice == 4 then
-		lib.waterCanalTowpath(R, maxLength)
-	else
-		lib.waterCanal(R, maxLength - moves)
+	local moves = lib.initialiseCanal(R) -- move to correct position and/or start new canal
+	if R.data == 1 then -- 2 turtles
+		lib.side(R, maxLength - moves)	
+	else -- 4 turtles 
+		if R.subChoice == 1 or R.subChoice == 4 then -- towpath
+			lib.towpathOnly(R)
+			--lib.waterCanalTowpath(R, maxLength - moves)
+		else -- main canal only
+			lib.waterOnly(R, maxLength - moves)
+		end
 	end
 	
 	return {}
@@ -6821,7 +7317,8 @@ local function createMobGrinder(R)
 		T:place(R.useBlockType, 0, "forward", false)
 		T:turnLeft(2)
 		T:place(R.useBlockType, 0, "forward", false)	-- facing right
-		T:turnLeft(1)
+		T:turnLeft(1)									-- at top of column
+		T:go("x1D1 x1D1 x1U2")							-- open exit for mobs
 		utils.goBack(2)
 		T:place(R.useBlockType, 0, "forward", false)
 		T:down(9)
@@ -6856,7 +7353,8 @@ local function createMobGrinder(R)
 		T:turnRight(2)
 		return{"Not in correct position. Must be water behind"}
 	end
-	T:go("U1x1 U1L1 F4R2")					-- go up to starting point
+	--T:go("U1x1 U1L1 F4R2")					-- go up to starting point
+	T:go("U2L1 F4R2")					-- go up to starting point
 	local data = createFloorCeiling(R)[1] 	-- place ceiling, returns to starting position. if water or lava present is returned as "water or lava found"
 	if data == "water or lava found" then
 		R.height = 10
@@ -7122,7 +7620,7 @@ local function demolishPortal(R) -- 43
 	R.data = "bury" to embed bottom into ground
 	R.subChoice 1 = facing portal, 2 = aligned
 	]]
-
+	local data = R.data
 	if R.subChoice == 1 then -- facing portal
 		T:go("F"..R.width.."R1")
 	else
@@ -7135,10 +7633,18 @@ local function demolishPortal(R) -- 43
 	R.data = "up"
 	R.silent = true
 	if R.width == 1 then
-		return clearWall(R)
+		clearWall(R)
 	else
-		return clearBuilding(R, true, true)
+		clearBuilding(R, true, true)
 	end
+	if data == "bury" then
+		T:up(1)
+	end
+	if R.subChoice == 1 then -- facing portal
+		T:go("R1F1L1F1L1")
+	end
+	
+	return {}
 end
 
 local function digTrench(R) -- 77
@@ -7183,24 +7689,6 @@ local function digTrench(R) -- 77
 	
 	return {}
 end
-
-local function harvestRun(runLength)
-	local blockType
-	local blockModifier
-
-	for i = 1, runLength do
-		blockType, blockModifier = T:getBlockType("forward") -- store information about the block in front in a table
-		if blockType ~= "" then
-			if blockType:find("log") ~= nil then
-				T:harvestTree(true, false)
-			else
-				T:forward(1)			
-			end	
-		else
-			T:forward(1)
-		end
-	end
-end	
 
 local function harvestTreeFarm(R) -- 24
 	local lib = {}
@@ -7266,28 +7754,57 @@ local function harvestTreeFarm(R) -- 24
 end
 
 local function harvestObsidian(R) -- 41
-	local heightParts = math.floor(R.length / 8) -- eg 12/8 = 1
-	local lastPart = R.length - (heightParts * 8) -- eg 12 - (1 * 8) = 4
-	if R.width % 2 ~= 0 then
-		R.width = R.width + 1
+	local lib = {}
+	
+	function lib.forward(move)
+		T:isWaterOrLava("forward")	-- automatically use lava ahead to refuel
+		T:isWaterOrLava("down") 	-- automatically use lava down to refuel
+		T:go("C2", false, 0, false)	-- place / replace block below
+		if move then
+			T:forward(1)
+		end
 	end
-	for y = 1, R.width do
-		print("Mining column "..tostring(y).." of "..tostring(R.width))
-		for j = 1, heightParts do
-			T:go("m8")
+	
+	function lib.home(outward)
+		if outward then
+			T:go("L1F"..R.width - 1 .."L1F"..R.length - 1)
+		else	
+			T:go("R1F"..R.width - 1 .."R1")
 		end
-		if lastPart > 0 then
-			T:go("m"..tostring(lastPart)) -- eg m4
+	end
+	
+	function lib.start()
+		local lavaSlot = T:getItemSlot("lava")
+		if lavaSlot > 0 then
+			turtle.select(slot)
+			turtle.refuel()
 		end
-		-- R.width = tonumber(R.width)
-		if y < R.width then
-			if y % 2 == 0 then
-				T:go("L1F1L1")
+		T:down(1)
+	end
+	
+	local outward = true
+	
+	lib.start()						-- use lava bucket if placed, move down into block below
+	for w = 1, R.width do
+		for l = 1, R.length do
+			if l < R.length then
+				lib.forward(true)
 			else
-				T:go("R1F1R1")
+				lib.forward(false)
 			end
 		end
+		if w < R.width then
+			if outward then
+				T:go("R1F1R1")
+			else
+				T:go("L1F1L1")
+			end
+			outward = not outward
+		end
 	end
+	
+	lib.home(outward)
+	
 	return {}
 end
 
@@ -7304,8 +7821,13 @@ local function manageFarm(R)
 			T:checkInventoryForItem({"minecraft:crafting_table"}, {1})
 			local equippedRight, equippedLeft = T:setEquipment()
 		end]]
+		T:suck("down")		-- if hoe already in storage get it out
 		if inInventory ~= "minecraft:diamond_hoe" then
-			T:checkInventoryForItem({"minecraft:diamond_hoe"}, {1}, true, "Diamond Hoe required for planting!")
+			if T:getItemSlot("minecraft:diamond_hoe") > 0 then
+				return true
+			else
+				T:checkInventoryForItem({"minecraft:diamond_hoe"}, {1}, true, "Diamond Hoe required for planting!")
+			end
 		end
 		if T:getItemSlot("minecraft:diamond_hoe") > 0 then
 			return true
@@ -7370,7 +7892,7 @@ local function manageFarm(R)
 	
 	function lib.farmToRight()
 		--[[ facing crops on first farm. move to next farm on right side ]]
-		T:go("U1F11D1")					-- on next farm, facing crops
+		T:go("U1F11 D1")				-- on next farm, facing crops
 		local crop = lib.manageTree()	-- refuel, gather seeds and other crops
 		lib.harvest(crop)				-- harvest field, store crops
 	end
@@ -7447,13 +7969,7 @@ local function manageFarm(R)
 	
 	function lib.goHome()
 		-- after a re-boot go to start
-		local success = false
 		local onTree = false
-		local onWater = false
-		local onChest = false
-		local onCobble = false
-		local onField = false
-
 		-- is tree above or in front
 		-- check if log in front
 		if T:getBlockType("forward"):find("log") ~= nil then -- about to harvest tree
@@ -7475,8 +7991,7 @@ local function manageFarm(R)
 		if onTree then -- tree harvested, but direction unknown
 			local blockType = ""
 			local turns = 0
-			
-			onChest = lib.isStorage("down")
+			local onChest = lib.isStorage("down")
 			while not onChest do
 				if turtle.forward() then
 					if lib.isStorage("down") then
@@ -7503,164 +8018,8 @@ local function manageFarm(R)
 		else
 			while turtle.down() do end -- no tree around, no logs onboard
 		end
-		if not onChest then -- no sign of tree harvest
-			local blockType = T:getBlockType("down")
-			if blockType:find("water") ~= nil then
-				onWater = true
-			elseif blockType:find("cobble") ~= nil then
-				onCobble = true
-			elseif blockType == "minecraft:dirt" or blockType == "minecraft:grass_block" then --on field after call to go down
-				T:up(1)
-				onField = true
-			else
-				--check for crops below
-				local isReady, cropType, status = lib.isCropReady("down")
-				if cropType ~= "" then
-					onField = true
-				end
-			end
-		end
-		
-		if onField then
-			--[[ continue across until detect cobble or chest below ]]
-			local cobble = -1
-			local endBlock = lib.crossFarm()
-			if endBlock:find("cobble") ~= nil then
-				onCobble = true
-			elseif endBlock:find("barrel") ~= nil or endBlock:find("chest") ~= nil then
-				onChest = true
-			end
-			onField = false
-		end
-		-- check now for onWater, onCobble, onChest
-		if onWater then -- must be on non-start water
-			--[[0 chests near = top right / top left on single farm / bottom right on single farm
-				1 chest near = top left on extended farm/ bottom right on extended farm
-				crop,crop,chest,cobble = bottom right extended
-				crop,crop,cobble,chest = top left extended farm
-				]]
-			-- turn until facing either cobble or chest
-			local cobbleInFront = false
-			local chestInFront = false
-			local blockType = ""
-			for i = 1, 4 do
-				if lib.isStorage("forward") then
-					onChest = true
-				end
-				if blockType:find("cobble") ~= nil then
-					onCobble = true
-				end
-				if onChest or onCobble then
-					T:go("U1F1")
-					break
-				else
-					T:turnRight(1)
-				end
-			end
-		end
-		if onCobble then -- if onCobble find chest
-			-- check which direction cobble continues
-			for i = 1, 4 do
-				if turtle.forward() then -- no obstruction
-					local blockType = T:getBlockType("down")
-					if blockType:find("cobble") ~= nil then --continue this route
-						break
-					elseif lib.isStorage("down") then
-						onChest = true
-						break
-					end
-				else -- blocked ? tree/sapling
-					local blockType = T:getBlockType("forward")
-					if blockType:find("log") ~= nil or blockType:find("sapling") ~= nil then
-						-- next to tree/sapling, but not on chest, must be behind extended farm tree
-						T:go("R2F9") -- turn round and continue forwards to first farm tree
-						if lib.isStorage("down") then --stay here and exit loop
-							onChest = true
-							break
-						end
-					end
-				end
-				if not onChest then
-					turtle.back()
-					T:turnLeft(1)
-				end
-			end
-			if not onChest then -- still on cobble, facing wall length
-				-- move forward until cobble runs out-- will be over retaining wall, or on chest
-				while T:getBlockType("down"):find("cobble") ~= nil do
-					if not turtle.forward() then -- movement obstructed, must be tree/sapling
-						local blockType = T:getBlockType("forward")
-						if blockType:find("log") ~= nil or blockType:find("sapling") ~= nil then
-							-- next to tree/sapling, but not on chest, must be behind extended farm
-							T:go("R2F9") -- turn round and continue forwards
-							if lib.isStorage("down") then --stay here and exit loop
-								onChest = true
-								break
-							end
-						end
-					end
-				end
-				-- moved over last of cobble without obstruction = outside farm
-				-- no longer on cobble, could be a chest
-				if lib.isStorage("down") then
-					onChest = true
-				else
-					-- turn round and continue back along cobble until reach other end
-					T:go("R2")
-					while T:getBlockType("down"):find("cobble") ~= nil do
-						if not turtle.forward() then -- movement obstructed, must be tree/sapling
-							local blockType = T:getBlockType("forward")
-							if blockType:find("log") ~= nil or blockType:find("sapling") ~= nil then
-								-- next to tree/sapling
-								if lib.isStorage("down") then --stay here and exit loop
-									onChest = true
-									break
-								end
-							end
-						end
-					end
-				end
-			end
-			-- cobble ended, over edge of wall, on tree base with no sapling, or on chest
-		end
-		
-		if onChest then -- if onChest find water
-			-- check if next block is a chest
-			for i = 1, 4 do
-				if turtle.forward() then -- no obstruction
-					local blockType = T:getBlockType("down")
-					if blockType == "minecraft:dirt" or blockType == "minecraft:grass_block" then -- on tree base
-						turtle.back()
-						break
-					elseif lib.isStorage("down") then --stay here and exit loop
-						onChest = true
-						break
-					end
-				else -- blocked ? tree/sapling
-					local blockType = T:getBlockType("forward")
-					if blockType:find("log") ~= nil or blockType:find("sapling") ~= nil then
-						-- next to tree/sapling
-						break
-					end
-				end
-				turtle.back()
-				T:turnLeft(1)
-			end
-			-- now on chest next to tree
-			T:go("R1F1D1")
-			blockType = T:getBlockType("down")
-			if blockType:find("water") ~= nil then
-				return lib.checkPosition()
-			else -- no water so return to other side of chest
-				T:go("R2U1F2D1")
-				blockType = T:getBlockType("down")
-				if blockType:find("water") ~= nil then
-					return lib.checkPosition()
-				end
-			end
-		end
 			
-		return success
+		return false
 	end
 	
 	function lib.gotoTree(logSlot)
@@ -7675,10 +8034,9 @@ local function manageFarm(R)
 		if logSlot == 0 then -- no logs passed as parameter
 			logSlot = T:getItemSlot("log")
 		end
-		if logSlot > 0 then -- has logs so needs to craft and refuel
-			T:go("R1F1D1") -- return to base, facing buried storage
-		else
-			T:go("R1F1D1R1") -- return to base, facing crops
+		T:go("R1F1D1")			-- return to base, facing buried storage 
+		if logSlot == 0 then 	-- has logs so needs to craft and refuel
+			T:turnRight(1)		-- facing crops
 		end
 		
 		return logSlot
@@ -7700,17 +8058,15 @@ local function manageFarm(R)
 		local toRight = true
 		for l = 1, length do
 			for w = 1, width do
-				isReady, blockType, _ = lib.isCropReady("down")
+				isReady, blockType, _ = lib.isCropReady("down")	-- eg true, "minecraft:carrots", "7 / 7" or false, "", ""
 				turtle.select(1)
-				if blockType == "" and crop ~= "" then -- ? untilled soil or air above water
-					turtle.digDown()
-					turtle.digDown()
-					lib.plantCrop(crop, "down")
-				elseif isReady then
-					if crop == "" then
-						crop = lib.setCrop(blockType)
-					end
-					lib.plantCrop(blockType, "down")
+				if blockType == "" then					-- air (above water, storage or dirt)
+					--turtle.digDown("left")			-- use pickaxe
+					turtle.digDown("right")				-- use hoe
+					lib.plantCrop(crop, "down")			-- plant crop
+				elseif isReady then						-- crop below is ready
+					turtle.digDown("left")				-- use pickaxe
+					lib.plantCrop(blockType, "down")	-- plant crop
 				end
 				T:forward(1)
 				if l == 1 and w == width then -- last block of first row at front of farm
@@ -7798,7 +8154,7 @@ local function manageFarm(R)
 			if not needsFuel then 			-- logs already onboard, no tree harvest, so turn towards buried chest
 				T:turnLeft(1)
 			end
-			T:go("F1") 						-- move to buried crafting chest
+			T:go("F1") 						-- move to buried storage chest/barrel
 			lib.refuelWithLogs(logSlot) 	-- use any logs for fuel
 			T:go("R2F1")					-- facing seed chest/barrel
 		else
@@ -7820,7 +8176,7 @@ local function manageFarm(R)
 	function lib.isCropReady(direction)
 		local isReady = false
 		local status = ""
-		local blockType = ""
+		local cropType = ""
 		local success = false
 		local data = {}
 
@@ -7832,9 +8188,11 @@ local function manageFarm(R)
 			success, data = turtle.inspect()
 		end
 		if success then
-			blockType = data.name
+			cropType = data.name
+			--print("cropType: "..cropType) read()
 			if data.name == "minecraft:carrots" then
 				status = data.state.age.." / 7"
+				--print("Carrots status: "..status) read()
 				if data.state.age == 7 then
 					isReady = true
 				end
@@ -7855,7 +8213,7 @@ local function manageFarm(R)
 				end
 			end
 		end
-		return isReady, blockType, status
+		return isReady, cropType, status	-- eg true, "minecraft:carrots", "7 / 7" or false, "", ""
 	end
 
 	function lib.isStorage(direction)
@@ -7871,7 +8229,8 @@ local function manageFarm(R)
 	
 	function lib.plantCrop(crop, direction)
 		local planted = false
-		turtle.digDown() -- harvest existing and till soil
+		--turtle.digDown("left") -- harvest existing
+		--turtle.digDown("right") -- till soil
 		if crop:find("potato") ~= nil then
 			T:dropItem("poison", "up", 0)
 		end
@@ -7896,10 +8255,8 @@ local function manageFarm(R)
 		T:sortInventory()
 		while T:suck("down") do end					-- empty out barrel/chest to find crafting table
 		if T:getItemSlot("crafting") == 0 then
-			print("Crafting table required in the ".. storageType.." below.\n\nAdd a crafting table and restart")
-			error()
+			T:checkInventoryForItem({"crafting"}, {1}, true, "Crafting table required for logs->planks")
 		end
-
 		if T:equip("right", "minecraft:crafting_table") then -- swap equipment on right side
 			for i = 1, 16 do						-- drop anything except logs down into barrel/chest/pit
 				if T:getSlotContains(i):find("log") == nil then
@@ -7940,22 +8297,7 @@ local function manageFarm(R)
 		--[[ move from farm on right back to starting farm ]]
 		T:go("U1R2F11D1R2")
 	end
-	
-	function lib.setCrop(blockType)
-		if blockType:find("carrot") ~= nil then
-			return "carrot"
-		end
-		if blockType:find("potato") ~= nil then
-			return "potato"
-		end
-		if blockType:find("beetroot") ~= nil then
-			return "beetroot"
-		end
-		if blockType:find("wheat") ~= nil then
-			return "wheat"
-		end
-	end
-	
+		
 	function lib.storeCrops()
 		-- place crops and seeds into chests
 		T:turnRight(1)
@@ -8004,10 +8346,10 @@ local function manageFarm(R)
 		call lib.harvest when ripe
 		return farm(s) found in front or to the right
 		]]
-		local isReady, crop, status = lib.isCropReady("forward")
+		local isReady, crop, status = lib.isCropReady("forward")		-- eg true, "minecraft:carrots", "7 / 7" or false, "", ""
 		-- check state of crop in front. Harvest if ripe		
 		while not isReady do
-			isReady, crop, status = lib.isCropReady("forward")
+			isReady, crop, status = lib.isCropReady("forward")			-- eg true, "minecraft:carrots", "7 / 7" or false, "", ""
 			if not isReady then
 				if crop == "" then
 					print("No crops found in front")
@@ -8074,16 +8416,19 @@ next to the water source.
 	
 	-- check if crops already planted
 	local isReady, crop, status = lib.isCropReady("forward")
-	if crop == "" then
+	local watch = true	-- assume watching farm already planted
+	if crop == "" then	-- nothing has been planted
+		watch = false-- not watching, continue with planting
 		pp.itemColours = {colors.lightGray, colors.red, colors.orange, colors.brown}
-		choices = {"wheat_seeds","beetroot_seeds", "carrot", "potato"}
+		crops = {"minecraft:wheat_seeds", "minecraft:beetroot_seeds", "minecraft:carrots", "minecraft:potatoes"}
+		choices = {"wheat (seeds)", "beetroot (seeds)", "carrot", "potato"}
 		choice = menu.menu("Choose preferred crop", choices, pp, "Type number of your choice")
-		crop = choices[choice]
+		crop = crops[choice]
 		T:checkInventoryForItem({crop}, {95}, true, "Do not mix! add as many as you want")
 	end
 
 	while true do -- start infinite loop of watching crops, farming all modules
-		if crop == "" then -- not already in inventory
+		if watch then -- not already in inventory
 			crop = lib.watchFarm() --waits if required, returns crop type when ripe
 		end
 		print("Beginning "..crop.." management")
@@ -8757,7 +9102,7 @@ local function quickMine(R) -- 17
 	local lib = {}
 	
 	function lib.refuel(direction)
-		if T:place("minecraft:bucket", -1, direction) then
+		if T:getWater(direction)  then
 			T:refuel(1000, false)
 		end
 	end
@@ -8947,10 +9292,11 @@ local function getTaskItemsList()
 	text[41] = {"stone to cover area of obsidian"}														-- Harvest obsidian
 	text[42] = {"2 x height + width obsidian", "4 stone"} 												-- build Nether portal
 	text[43] = {"No items required"}																	-- demolish Nether portal
-	text[44] = {"84 stone"} 																			-- undermine dragon towers
-	text[45] = {"No items required"} 																	-- deactivate dragon tower
-	text[46] = {"448 stone, 145 ladders, 1 obsidian, 1 water bucket"} 									-- dragon water trap
-	text[47] = {"height * 4 stone","height * ladders", "1 trapdoor"}									-- build end portal platform
+	text[44] = {"length * 4 stone/netherrack, bucket"} 													-- Netherite stripping
+	text[45] = {"84 stone"} 																			-- undermine dragon towers
+	text[46] = {"No items required"} 																	-- deactivate dragon tower
+	text[47] = {"448 stone, 145 ladders, 1 obsidian, 1 water bucket"} 									-- dragon water trap
+	text[48] = {"height * 4 stone","height * ladders", "1 trapdoor"}									-- build end portal platform
 				
 	--CANALS BRIDGES WALKWAYS
 	text[51] = {"dirt or stone * length","torch (optional)"} 											-- single path
@@ -9209,13 +9555,13 @@ If next to a ladder, place as below:
 ~yellow~Place me on the ground. I will build a
 3 x 1 ~blue~water ~yellow~source and a single column
 bubble lift to the chosen height.
-If next to a ladder, place as below:
+If near a ladder, place left or right:
 
-~lightGray~| | | | | | ~blue~B = Bubble column
-~lightGray~| | |*| | | * = Ladder support block
-| |~blue~B~brown~|L|~blue~B~lightGray~| | ~brown~L = ladder
-~lightGray~| |~red~^~lightGray~| |~red~^~lightGray~| | ~red~^ = Turtle facing forward
 ~lightGray~| | | | | |
+~lightGray~| | |*| | | * = Ladder support block
+| |~blue~^~brown~|L|~blue~^~lightGray~| | ~brown~L = ladder
+~lightGray~| | | | | | ~blue~^ = Turtle facing forward
+~lightGray~| | | | | | ~blue~^ = Bubble column above
 
 ]] -- single column bubble lift
 	info.sub[16] = 
@@ -9423,10 +9769,23 @@ side facing the obsidian field.
 ~yellow~Result (plan)      ~lightGray~|O|~purple~+ +~lightGray~|O|
 ~lightGray~| |O|O|O|O| | |    |*|O|O|*|
                    ~green~--------- ground
-~yellow~width=4, ~orange~height=5
+~yellow~width=4, ~orange~height=5 ~red~(frame size)
 ]] -- build Nether portal
 	info.sub[43] = info.sub[42] -- Demolish Nether portal
 	info.sub[44] = 
+[[~yellow~Press F3+G for chunk boundaries
+Netherite stripmine plan view
+               
+~lightGray~|*|*|*~lime~N~lightGray~*|*|*|
+~lightGray~|*|*|*~lime~|~lightGray~*|*|*| ~lime~-| = Chunk Boundaries
+~lightGray~|*|~red~^~lightGray~|*~lime~|~lightGray~*|~red~^~lightGray~|*|  ~red~^ = Turtle
+~lime~W*-*-*~blue~+~lime~*-*-*E  ~blue~+ = Boundaries junction
+~lightGray~|*|*|*~lime~|~lightGray~*|*|*|
+~lightGray~|*|*|*~lime~|~lightGray~*|*|*|  ~yellow~North of WE
+~lightGray~|*|*|*~lime~S~lightGray~*|*|*|  ~yellow~1 block from NS
+Most generate close to chunk boundaries
+]] -- Netherite stripping
+	info.sub[45] = 
 [[~yellow~Place me on the ground ~red~<~yellow~ facing ~red~West.
 
 ~lime~x
@@ -9440,7 +9799,7 @@ side facing the obsidian field.
 Centre of the dragon arena ~lime~X = 0, ~green~Z = 0
 ~yellow~                           facing ~red~West 
 ]] -- Find dragon tower centres
-	info.sub[45] = 
+	info.sub[46] = 
 [[~yellow~Place turtle in ceiling facing endstone
 
 Plan view    Side view
@@ -9453,7 +9812,7 @@ Plan view    Side view
 ~gray~    |*|      |*|*| |*|*|
              |*|*| |*|*|
 ]] -- deactivate dragon tower
-	info.sub[46] = 
+	info.sub[47] = 
 [[~yellow~Place turtle on the ground at 100,49,0
 
 |*|*|*|*|*|*|*|*|*|  ~lightGray~Dragon Island
@@ -9466,7 +9825,7 @@ Plan view    Side view
 ~gray~    |*|*|*|*|*|
     |*|*|*|*|*|
 ]] -- build dragon water trap
-	info.sub[47] = 
+	info.sub[48] = 
 [[~yellow~Place turtle under end world portal
 
 ~gray~        |B|     B ~lightGray~= Bedrock
@@ -9508,30 +9867,29 @@ Plan view    Side view
 ~green~Floor + ceiling ~yellow~placed for your safety!
 ]] -- Covered walkway / tunnel
 	info.sub[53] = 
-[[~yellow~plan view    Cross section view
+[[~yellow~plan view
 
 ~lightGray~|*|~blue~-|-~lightGray~|*|
-~lightGray~|*|~blue~-|-~lightGray~|*|
+~lightGray~|*|~blue~-|-~lightGray~|*|    ~yellow~Cross section view
 ~lightGray~|*|~blue~-|-~lightGray~|*|     ~lime~1 ~orange~2 ~brown~3 ~green~4  ~lightGray~= on ground
 ~lightGray~|~lime~^~lightGray~|~blue~^~lightGray~|~cyan~^~lightGray~|~green~^~lightGray~|    |*|~blue~5~lightGray~|~cyan~6~lightGray~|*| ~lightGray~= in water
 
-~yellow~New canal       ~lime~1 ~orange~2 ~brown~3 ~green~4 ~yellow~on ground
-~yellow~Extend existing ~lime~1 ~green~4 ~blue~5 ~cyan~6
-~yellow~Extend on ocean ~lime~1     ~green~4~yellow~ on solid block
+~yellow~New canal       ~lime~1 ~orange~2 ~brown~3 ~green~4 ~yellow~ground level-63
+~yellow~Extend existing ~lime~1     ~green~4 ~yellow~ground level-63
+~yellow~Extend existing   ~blue~5 ~cyan~6   ~yellow~water  level-62
 ]] -- new/existing canal
---[[This line of text = 39 characters]]
 	info.sub[54] = 
-[[~yellow~New ice canal or convert existing water
+[[~lime~New ~yellow~ice canal or ~lightBlue~convert ~yellow~existing water
 
-~lightGray~ |*| | |*| 	|*| = ~magenta~Slab* ~lightGray~or ~pink~Trapdoor*
-~lightGray~ |~orange~T~lightGray~|~blue~I~lightGray~| |*| 	|~blue~I~lightGray~| = ~blue~Ice (packed or blue)
+~lightGray~ |*| | |*| 	 * = Slab
+~lightGray~ |~orange~T~lightGray~|~blue~I~lightGray~| |*| 	 ~blue~I = Ice (packed or blue)
 ~lightGray~ |*| | |*| 	| | = Air (empty block)
-~lightGray~ |*|~blue~I~lightGray~| |~orange~T~lightGray~|  |~orange~T~lightGray~| = ~orange~Torch (optional)
-  ~lime~1 2 3 4   ~lightGray~Turtle position: ~lime~Towpath
-    ~blue~5 ~lightGray~6     Turtle position: ~blue~Ice ~lightGray~Air
+~lightGray~ |*|~blue~I~lightGray~| |~orange~T~lightGray~|   ~orange~T = Torch (optional)
+~lime~  1 2 3 4    New ice canal
+~lightBlue~  5 6 7 8    Convert water canal
 
-position ~lime~1 ~lightGray~moves to ~lime~2~lightGray~, ~lime~4 ~lightGray~moves to ~lime~3
-~lightGray~Height=2 blocks ~pink~*=Trapdoor ~lightGray~>2 ~magenta~*=Slab
+~red~All turtles placed at ground level!
+~lime~1-4 ~lightGray~for ~lime~new ~lightGray~canal ~lightBlue~5-8 ~lightGray~to ~lightBlue~convert ~lightGray~water
 ]] -- ice canal
 	info.sub[55] = 
 [[~yellow~Place ~red~^~yellow~ any level air, water or lava.~lightGray~
@@ -9590,14 +9948,15 @@ T|*| | | | | |*|T  * = Dungeon Wall
 [[~yellow~Place turtle as indicated:
 Plan view          Side view
 
-~lightGray~|*|*|*|*|*|*|*|*|  ~lime~< T = Continue build
+~lightGray~|*|*|*|*|*|*|*|*|  ~lime~> T = Continue build
 ~lightGray~|*| | | | | | | |  ~red~< T = New build
 ~lightGray~|*| | | | | | | |
-|*| | | |~purple~S~lightGray~| | | |~lime~<~red~<
-~lightGray~|*| | | | | | | |           ~red~T
-~lightGray~|*| | | | | | | |  |*| | | |~purple~S~lightGray~| | | |~lime~T~red~T
-~lightGray~|*|*|*|*|*|*|*|*|  |*|*|*|*|*|*|*|*|
-]] -- 9x9 cube round blaze spawner with minecart collection
+|*| | | |~purple~S~lightGray~| | | |~lime~>~red~<          T
+~lightGray~|*| | | | | | | |   |*| | | |~purple~S~lightGray~| | | |~red~T
+~lightGray~|*| | | | | | | |   |*| | | | | | | |
+~lightGray~|*| | | | | | | |   |*| | | | | | | |
+~lightGray~|*|*|*|*|*|*|*|*|   |*| | | | | | | |~lime~T
+                                     ~red~T]] -- 9x9 cube round blaze spawner
 	info.sub[63] = 
 [[~yellow~ Plan view (truncated)    Side view
 
@@ -9737,14 +10096,14 @@ Plan view        Side view
 [[~yellow~Mountain carving     ~red~T ^ = Turtle
 ~yellow~Side view            Plan view
 
-~lightGray~        |*|              |*|*|
-~gray~ 	    |*~lightGray~|*|            ~gray~|*~lightGray~|*|*|*|
-~gray~      |*~lightGray~|*|*|*|      ~gray~|*|*~lightGray~|*|*|*|*|
-~gray~      |*~lightGray~|*|*|*|      ~gray~|*|*~lightGray~|*|*|*|*|
-~gray~      |*~lightGray~|*|*|*|       ~red~^~gray~|*~lightGray~|*|*|*|
-~gray~    |*|*~lightGray~|*|*|*|*|        |*|*|
-   ~red~T~gray~|*|*|~lightGray~*|*|*|*|
- 
+~lightGray~        |*|              |*|*|      ~yellow~L
+~gray~ 	    |*~lightGray~|*|            ~gray~|*~lightGray~|*|*|*|    ~yellow~E
+~gray~      |*~lightGray~|*|*|*|      ~gray~|*|*~lightGray~|*|*|*|*|  ~yellow~N
+~gray~      |*~lightGray~|*|*|*|      ~gray~|*|*~lightGray~|*|*|*|*|  ~yellow~G
+~gray~      |*~lightGray~|*|*|*|       ~red~^~gray~|*~lightGray~|*|*|*|    ~yellow~T
+~gray~    |*|*~lightGray~|*|*|*|*|        |*|*|      ~yellow~H
+   ~red~T~gray~|*|*~lightGray~|*|*|*|*|
+    ~yellow~<--> no. of rows <-->
 ]] -- Carve mountain
 	info.sub[79] = 
 [[~yellow~Place / Replace floor or ceiling
@@ -10063,17 +10422,17 @@ Place me on the floor above pit / edge
 
 ]] -- Borehole: Analyse blocks below
 	info.sub[110] = 
-[[~yellow~Multiple options for canal building:
+[[~yellow~How many turtles?:
 
-~lightGray~| |~red~T~lightGray~|~lime~T~lightGray~| | 2 turtles: ~red~* W, ~lime~W *
-~lightGray~|*|~blue~W|W|~lightGray~*|
+~yellow~1.~lightGray~ Alternative positions for ~lime~2 ~lightGray~turtles
+~lightGray~| |~lime~1~lightGray~|~lime~2~lightGray~| |  |~lime~1~lightGray~| | |~lime~2~lightGray~| | | | | | ground 2
+~lightGray~|*|~blue~W|W~lightGray~|*|  |*|~blue~W|W~lightGray~|*| |*|~blue~1~lightGray~|~blue~2~lightGray~|*| water  2
 
-~lightGray~|~red~T|~orange~T|~yellow~T|~brown~T~lightGray~| 4 turtles, ~red~*, ~orange~W, ~yellow~W, ~brown~*
-~lightGray~|*|~blue~W|W|~lightGray~*|
+~yellow~2.~lightGray~ Alternative positions for ~orange~4 ~lightGray~turtles
+~lightGray~|~orange~1~lightGray~|~orange~2~lightGray~|~orange~3~lightGray~|~orange~4~lightGray~|                      ground 4
+~lightGray~|*|~blue~W|W~lightGray~|*|                      water  0
 
-~yellow~Option 1 for half canal per turtle
-~yellow~Option 2 for quarter canal per turtle
-]]
+~yellow~Enter 1 to use ~lime~2 ~yellow~turtles or 2 to use ~orange~4]]	-- initial menu for water canal
 	local line = menu.clear()
 	if menuLevel == 1 then -- general help
 		line = menu.colourText(line, info.main[menuItem], true, true)
@@ -10150,6 +10509,7 @@ local function getTaskOptions()
 		"Dig obsidian field",
 		"Build Nether Portal",
 		"Demolish Nether Portal",
+		"Stripmine Netherite",
 		"Undermine Dragon Towers",
 		"Deactivate Dragon Tower",
 		"Build dragon water trap",
@@ -10272,6 +10632,7 @@ local function getTaskColours()
 		colors.lightGray, 	-- Dig obsidian field
 		colors.purple, 		-- Build Nether Portal
 		colors.gray, 		-- Demolish Nether Portal
+		colors.red,			-- Netherite stripping
 		colors.orange, 		-- Undermine Dragon Towers
 		colors.orange, 		-- Deactivate Dragon Tower
 		colors.blue, 		-- Build dragon water trap
@@ -10499,7 +10860,7 @@ local function getTask(R)
 	end
 	
 	local prompt = "Choose an option"
-	local noAutoHelp = {53, 54, 81, 85}
+	local noAutoHelp = {24, 53, 54, 81, 85}
 	if not lib.isAutoHelp(R.choice, noAutoHelp) then -- exclude Water canal, ice canal, sand utilities, monument utilities
 		getTaskHelp(2, R.choice, true)
 		menu.clear()
@@ -10515,11 +10876,11 @@ local function getTask(R)
 	elseif R.choice == 15 then	-- bubble lift
 		local currentLevel = menu.getInteger("Current level (F3->Y coord)? ", bedrock + 5 , ceiling, nil, colors.blue, nil, bedrock + 5)
 		local destLevel = menu.getInteger("Go up to level? ("..currentLevel + 2 .." to "..ceiling ..") ", currentLevel + 2, ceiling, nil, colors.lightGray)
-		if currentLevel <= bedrock + 5 then
-			if menu.getBoolean("Confirm at bedrock level (y / n) ", nil, colors.yellow, colors.black) then
+		--[[if currentLevel <= bedrock + 5 then
+			if menu.getBoolean("Confirm close to bedrock (y / n) ", nil, colors.yellow, colors.black) then
 				R.data = "bedrock"
 			end
-		end
+		end]]
 		R.height 	= math.abs(destLevel - currentLevel)
 	elseif R.choice == 16 then -- create mining corridor system default: square 17 x 17 
 		local choices = {"At corridor start, on the floor",
@@ -10555,13 +10916,13 @@ local function getTask(R)
 	elseif R.choice == 18 then -- Mine bedrock area
 		--getTaskHelp(2, R.choice, true)
 		--menu.clear()
-		R.width 	= menu.getInteger("Width (2-64 default 15) ", 2, 64, nil, colors.yellow, nil,  15)
-		R.length 	= menu.getInteger("Length (2-64 default 15) ", 2, 64, nil, colors.orange, nil,  15)
-		if menu.getBoolean("Leave bedrock exposed? (y/n) ", nil, colors.yellow, colors.black) then
+		R.width 	= menu.getInteger("Width (2-64 default 17) ", 2, 64, nil, colors.yellow, nil,  17)
+		R.length 	= menu.getInteger("Length (2-64 default 17) ", 2, 64, nil, colors.orange, nil,  17)
+		if menu.getBoolean("Leave bedrock exposed? (y/n) ", nil, colors.yellow) then
 			R.data = "leaveExposed"
 		end
 	elseif R.choice == 19 then -- salvage mine shaft
-		
+		R.torchInterval = menu.getInteger("Torch spacing? (0-64)", 0, 64, nil, colors.red)
 -- 02. FORESTRY
 	elseif R.choice == 22 then --Create treefarm
 		R.width = 15
@@ -10572,12 +10933,12 @@ local function getTask(R)
 		if choice == 2 then
 			R.data = "existing"
 		end
-		R.up = menu.getBoolean({"Any blocks/trees above current level","in a 15 x 15 block area (y/n) "}, nil, colors.yellow, colors.black)
+		R.up = menu.getBoolean({"Any blocks/trees above current level","in a 15 x 15 block area (y/n) "}, nil, {colors.yellow, colors.orange}, colors.black)
 	elseif R.choice == 23 then -- plant treefarm
 		local choices 	= {"16 single trees", "4 double trees any type"}
 		pp.itemColours = {colors.lime, colors.green}
 		R.subChoice = menu.menu(prompt, choices, pp, "Type number + Enter ")
-	elseif R.choice == 24 then -- Harvest treefarm
+	--elseif R.choice == 24 then -- Harvest treefarm
 	
 	elseif R.choice == 25 then -- Build wall or fence
 		R.width 	= menu.getInteger("Width of the area (1-64)", 1, 64, nil, colors.yellow)
@@ -10619,33 +10980,54 @@ local function getTask(R)
 		if modifier == "q" then -- quit chosen
 			return R
 		end
-		R.length 	= menu.getInteger("Width of the portal ", 1, 64, nil, colors.yellow, nil, 4)
-		R.height 	= menu.getInteger("Height of the portal ", 1, 64, nil, colors.lightGray, nil, 5)
-		R.width 	= menu.getInteger("How deep (Enter = 1)", 1, 64, nil, colors.red, nil, 1)
+		R.length 	= menu.getInteger("Portal width", 1, 64, nil, colors.yellow, nil, 4)
+		R.height 	= menu.getInteger("Portal height (inc. buried base)", 1, 64, nil, colors.lightGray, nil, 5)
+		R.width 	= menu.getInteger("Thickness (Usually 1) Enter = 1)", 1, 64, nil, colors.red, nil, 1)
 		if menu.getBoolean("Base below surface (y/n)", nil, colors.orange) then
 			R.data = "bury"
 		end
-	elseif R.choice == 44 then -- undermine dragon towers
+	elseif R.choice == 44 then -- Netherite stripping
+		R.width  	= 1
+		while R.length == 0 or R.length % 16 > 0 do
+			R.length = menu.getInteger("Strip length (divisible by 16) ", 16, 512, 1, colors.orange)
+			if R.length % 16 > 0 then
+				menu.colourText(1, "~red~Must be multiple of 16")
+			end
+		end
+		R.torchInterval = 16
+		R.data = "seal"
+	elseif R.choice == 45 then -- undermine dragon towers
 
-	elseif R.choice == 45 then -- deactivate dragon tower
+	elseif R.choice == 46 then -- deactivate dragon tower
 	
-	elseif R.choice == 46 then -- build dragon water trap
+	elseif R.choice == 47 then -- build dragon water trap
 
-	elseif R.choice == 47 then -- build end portal minecart station
+	elseif R.choice == 48 then -- build end portal minecart station
 
 	
 -- 05. CANAL BRIDGE
 	elseif R.choice == 51 then	--single path
-		R.length 	= menu.getInteger("Path length? 0 = continuous ", 0, 1024, nil, colors.orange, nil, 64)
+		if menu.getBoolean("Shorten an existing path? (y/n)", nil, colors.brown) then
+			R.data = "reduce"
+		end
+		if R.data == "reduce" then
+			R.length = menu.getInteger("Reduce by? 0 = here to end", 0, 1024, nil, colors.orange, nil, 64)
+		else
+			R.length = menu.getInteger("Path length? 0 = continuous ", 0, 1024, nil, colors.orange, nil, 64)
+			R.torchInterval = menu.getInteger("Torch spacing? (0-64)", 0, 64, line, colors.red, nil, 0)
+		end
 	elseif R.choice == 52 then	-- 2 block corridor / covered walkway
-		R.length 	= menu.getInteger("Corridor length? 0 = continuous ", 0, 1024, nil, colors.orange, nil, 64)
+		R.length 	= menu.getInteger("Corridor length?", 1, 1024, nil, colors.orange, nil, 64)
 		R.torchInterval = menu.getInteger("Torch spacing? (0-64)", 0, 64, nil, colors.red)
+		if menu.getBoolean("Seal off water or lava? (y/n)", nil, colors.brown) then
+			R.data = "seal"
+		end
 	elseif R.choice == 53 then	--left/right side of new/existing canal
 		local line = getTaskHelp(2, 110, true, true) -- request line no of help display if needed for getInteger
-		R.data = menu.getInteger("Choose method 1 or 2", 1, 2, line + 1, colors.white)
+		R.data = menu.getInteger("Choose method 1 or 2", 1, 2, line + 1, colors.white)	-- 2 or 4 turtles
 		menu.clear()
 		line = getTaskHelp(2, R.choice, true, true) -- request line no of help display if needed for getInteger
-		R.subChoice = menu.getInteger("Type position of turtle", 1, 6, line + 1, colors.white)
+		R.subChoice = menu.getInteger("Type position of this turtle", 1, 6, line + 1, colors.white)
 		local position = "on ground"
 		local side = "left"
 		local colour = colors.lime
@@ -10661,13 +11043,14 @@ local function getTask(R)
 			colour = colors.orange
 		elseif R.subChoice == 3 then
 			R.side = "R"
+			side = "right"
 			R.height = 1
 			position = "above canal"
 			colour = colors.brown
 		elseif R.subChoice == 4 then
 			R.side = "R"
-			R.height = 1
 			side = "right"
+			R.height = 1
 			colour = colors.green
 		elseif R.subChoice == 5 then
 			R.side = "L"
@@ -10676,9 +11059,9 @@ local function getTask(R)
 			colour = colors.blue
 		elseif R.subChoice == 6 then
 			R.side = "R"
+			side = "right"
 			R.height = 0
 			position = "on canal base"
-			side = "right"
 			colour = colors.cyan
 		end
 		line = menu.clear()
@@ -10688,41 +11071,68 @@ local function getTask(R)
 		-- menu.colourPrint(text, fg, bg, width)
 		-- menu.colourText(row, text, reset)
 		menu.colourPrint("Turtle placed "..side.." "..position, colour)
-		R.length 	= menu.getInteger("Canal length? 0 = continuous ", 0, 2048, line + 2, colors.orange, nil, 64)
+		R.length 	= menu.getInteger("Canal length? 0 = continuous ", 0, 512, line + 2, colors.orange, nil, 64)
 	elseif R.choice == 54 then	--ice canal 4 sections: edge+torch, edge, centre+ice, centre no ice
 		local line = getTaskHelp(2, R.choice, true, true) -- request line no of help display if needed for getInteger
-		R.subChoice = menu.getInteger("Type turtle position", 1, 6, line, colors.white)
+		R.subChoice = menu.getInteger("Type turtle position", 1, 8, line, colors.white)
 		R.side = "L"
 		local position = "on towpath"
 		local side = "left"
 		local colour = colors.lime
 		line = menu.clear()
-		if R.subChoice < 5 then
+		--[[
+			new canal
+			1 = left towpath- move to centre left
+			2 = centre left ice or hollow
+			3 = centre right ice or hollow
+			4 = right side - move to centre right
+			convert water canal
+			5 = left towpath
+			6 = centre left ice or air
+			7 = centre right ice or air
+			8 = right towpath
+		]]
+		if R.subChoice == 1 or R.subChoice == 4 or R.subChoice == 5 or R.subChoice == 8 then
+			-- on towpath r/l
 			R.torchInterval = menu.getInteger("Torch spacing? (0-64)", 0, 64, line, colors.red, nil, 0)
-			if R.subChoice > 2 then
+			if R.subChoice == 4 or R.subChoice == 8 then
 				side = "right"
 				R.side = "R"
 			end
-			if R.subChoice == 1 or R.subChoice == 2 then
-				-- menu.getBool(prompt, row, fg, bg, default)
-				
+			if R.subChoice <= 4 then -- 1 or 4 only
 				if menu.getBoolean("Place Ice as well? (y/n)", line + 1, colors.blue) then
 					R.data = "ice"
 				end
 			end
-		elseif R.subChoice == 5 then	
-			R.data = "ice"
-			position = "alternate air/ice"
-			colour = colors.blue
-		elseif R.subChoice == 6 then	
-			position = "on air spaces"
-			colour = colors.lightBlue
-			side = "right"
-			R.side = "R"
+		else -- on canal centre r/l
+			if R.subChoice == 3 or R.subChoice == 7 then
+				side = "right"
+				R.side = "R"
+			end
+			if R.subChoice == 2 or R.subChoice == 3 then -- new canal
+				R.torchInterval = menu.getInteger("Torch spacing? (0-64)", 0, 64, line, colors.red, nil, 0)
+				position = "above air/ice"
+			end
+			if menu.getBoolean("Place Ice as well? (y/n)", line + 1, colors.blue) then
+				R.data = "ice"
+				if R.subChoice == 6 or R.subChoice == 7 then	
+					position = "alternate air/ice"
+					colour = colors.lightBlue
+				end
+			else
+				if R.subChoice == 6 or R.subChoice == 7 then	
+					position = "on air spaces"
+					colour = colors.lighGray
+					if R.subChoice == 7 then
+						side = "right"
+						R.side = "R"
+					end
+				end
+			end
 		end
-		-- line = menu.clear()
+		R.length 	= menu.getInteger("Canal length? 0 = continuous ", 0, 1024, line + 2, colors.orange, nil, 64)
 		menu.colourPrint("Turtle on "..side.." side "..position, colour)
-		R.length 	= menu.getInteger("Canal length? 0 = continuous ", 0, 2048, line + 2, colors.orange, nil, 64)
+		sleep(2)
 	elseif R.choice == 55 then	--platform
 		R.width 	= menu.getInteger("Platform width", 1, 256, 1, colors.yellow)
 		R.length 	= menu.getInteger("Platform length", 1, 256, 2, colors.orange)
@@ -10736,9 +11146,6 @@ local function getTask(R)
 		R.height 	= menu.getInteger("Levels to go down?", 1, 1024 / R.width * R.length, nil, colors.blue)
 	elseif R.choice == 57 then	--boat bubble lift
 		R.height 	= menu.getInteger("Levels to go up?", 1, ceiling - 2, nil, colors.lightBlue)
-	elseif R.choice == 58 then	--ice canal trapdoors
-		R.subChoice = menu.getInteger("Am I on the left(0) or right(1)? ", 0, 1)
-		R.length 	= menu.getInteger("Canal length? 0 = continuous ", 0, 2048, nil, colors.orange, nil, 64)
 		
 -- 06. MOB SPAWNER TOOLS
 	elseif R.choice == 61 then -- create cube round mob spawner
@@ -10758,6 +11165,11 @@ the new dungeon wall at this height
 ]]
 		menu.colourText(nil, text, true)
 		read()
+		menu.clear()
+		R.data = "spawner"
+		if menu.getBoolean("Any chests around spawner? (y/n)",1, colours.red) then
+			R.data = "chest"
+		end
 		local choices = {"Turtle on spawner (no chests)",
 						 "Outside wall: left side, floor",
 						 "Outside wall: left side, ceiling",
@@ -10774,27 +11186,46 @@ the new dungeon wall at this height
 			R.width 	= menu.getInteger("Dungeon external width ", 0, 11, nil, colors.yellow, nil, 11)
 			R.length 	= menu.getInteger("Dungeon external length ", 0, 11, nil, colors.orange, nil, 11)
 		end
+		
 	elseif R.choice == 62 then -- Blaze spawner
 		local text =
 [[~yellow~Turtle placement options:
 
-~red~1. On top of the spawner
+~red~1a On top of the spawner
 
-~orange~2. At the same level, directly in front
-   or in direct line to the spawner.
-~yellow~   (can be behind a safety wall)
+~red~1b ~orange~At the same level in direct line of
+spawner.~yellow~ (can be behind a safety wall)
 
-~lime~3. Continue build: in front of missing
-   block in cube wall
+~red~1c~lightGray~ Room below spawner (via stairs)
 
-~white~Enter to continue
-]]
+~lime~2 Finish build: In brick floor outside
+  existing cube. (facing player)
+
+~white~Enter to continue]]
 		menu.colourText(nil, text, true)
 		read()
 		pp.itemColours = {colors.red, colors.lime}
-		R.subChoice = menu.new("Choose your option", {"New Blaze spawner", "Continuation (with killzone)"}, pp, "Type number + Enter") -- 1 = new, 2= continue
-		if R.subChoice == 2 then
-			R.data = "restart"
+		R.subChoice = menu.new("Choose your option", {"New Blaze spawner", "Complete part build (killzone)"}, pp, "Type number + Enter") -- 1 = new, 2= continue
+		R.data = "blaze"			-- default
+		if R.subChoice == 1 then	-- new blaze spawner
+			text =
+[[~yellow~Turtle placement options:
+~red~1. On top of the spawner
+~orange~2. In direct sight (safety wall ok)
+~lightGray~3. Room below spawner (via stairs)
+   |*|*|*|*|*|   Ceiling
+   |*|*|~red~T~lightGray~|*|*|   Turtle under ceiling
+   |*|~brown~+~lightGray~|*|~brown~+~lightGray~|*|   Top of fence
+   |*|~brown~+~lightGray~|*|~brown~+~lightGray~|*|
+   |*|~brown~+~lightGray~|*|~brown~+~lightGray~|*|   Bottom of fence
+   |*|*|*|*|*|   Floor level]]
+			--R.subChoice = menu.new("Choose your position", {"On top of spawner", "In direct sight (safety wall ok)", "Room below spawner"}, pp, "Type number + Enter")
+			--getInteger(prompt, minValue, maxValue, row, fg, bg, default) 
+			T:clear()
+			menu.colourText(nil, text, true)
+			R.subChoice = menu.getInteger("Enter position number", 1, 3, 12, colors.white)
+		else
+			R.data = "restart"		-- complete part build
 		end
 	elseif R.choice == 63 then -- flood spawner cube
 		local choices = {"Bubble lift", "Computercraft mob softener"}
@@ -10898,9 +11329,9 @@ the new dungeon wall at this height
 		R.length 	= menu.getInteger("Trench length? 0 = continuous ", 0, 1024, nil, colors.orange)
 	elseif R.choice == 78 then	-- Carve side of mountain
 		pp.itemColours = {colors.lime, colors.orange}
-		R.subChoice = menu.menu("Which side of me to remove?", {"Left", "Right"}, pp, "Type number + Enter ") -- open direction menu options
-		R.width 	= menu.getInteger("Width of area to remove? ", 1, 1024, nil, colors.yellow)
-		R.length 	= menu.getInteger("Length of area to remove? ", 0, 1024, nil, colors.orange)
+		R.subChoice = menu.menu("Remove blocks on which side?", {"Left", "Right"}, pp, "Type number + Enter ") -- open direction menu options
+		R.width 	= menu.getInteger("Remove how many vertical rows? ", 1, 1024, nil, colors.yellow)
+		R.length 	= menu.getInteger({"Max length of each row?"," - Prevents cutting too wide","1 to 255 default 64"}, 1, 255, nil, {colors.orange, colors.red, colors.white}, colors.black, 64)
 	elseif R.choice == 79 then	-- Place a floor or ceiling
 		local items = {	"Replacing current floor",
 						"New floor over existing",
@@ -11100,7 +11531,6 @@ the new dungeon wall at this height
 		R.subChoice	= menu.menu("Measure using?", {"Player entered", "No further water below"}, pp, "Type number + Enter ") -- open direction menu options
 		-- 1 = player entry, 2 = water length
 		if R.subChoice == 1 then
-			--R.length = utils.getSize(false, "water length (0=auto detect)", 0, 256)
 			R.length = menu.getInteger("water length (0=auto detect) ", 0, 256)
 		end
 	elseif R.choice == 105 then -- drill borehole and write borhole.txt to file
@@ -11134,6 +11564,13 @@ local function getTaskInventoryTo30(R)
 		local description = "Creating ladder going down"	-- default action description
 		pp.itemColours = {colors.blue, colors.lightGray}
 		pp.allowModifier = false -- only allow numbers to be returned
+		local inAir = false
+		local inNether = menu.getBoolean("Are you in the nether? (y/n) ", nil, colors.yellow, colors.black)
+		
+		if inNether then
+			bedrock = 0 
+			inAir = true
+		end
 		local option = menu.menu("Which direction?", {"Going down","Going up"}, pp) 
 		if option == 1 then
 			R.down = true
@@ -11160,7 +11597,10 @@ local function getTaskInventoryTo30(R)
 			end
 		end
 		local range = math.abs(R.height - R.depth)
-		local inAir = menu.getBoolean("Are you in air or nether? (y/n) ", nil, colors.yellow, colors.black)
+		
+		if not inAir then
+			inAir = menu.getBoolean("Are you in air (add blocks)? (y/n) ", nil, colors.yellow, colors.black)
+		end
 		--[[
 		range examples
 		-50 to -59 = -59 -(-50) = -9   down
@@ -11193,8 +11633,7 @@ local function getTaskInventoryTo30(R)
 			T:checkInventoryForItem({"stone"}, {cobbleNeeded})
 			T:checkInventoryForItem({"minecraft:chest"}, {1}) 	-- needed for crafting
 		end
-		print(thanks)
-		print(description)
+		menu.colourPrint(description, colors.lightBlue)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
 		if R.choice == 11 then
 			retValue = createLadder(R) -- "bedrock", 70, -48
@@ -11207,44 +11646,71 @@ local function getTaskInventoryTo30(R)
 		T:checkInventoryForItem({"minecraft:bucket"}, {1}, false)
 		T:checkInventoryForItem({"stone"}, {64})
 		T:checkInventoryForItem({"minecraft:chest"}, {1})
+		menu.colourPrint("CreateMine starting", colors.lightBlue)
 		sleep(2)
-		print("CreateMine starting")
 		retValue = createMine()
 	elseif R.choice == 14 then	-- safe drop to water
 		utils.checkFuelNeeded(R.height * 2)
 		T:checkInventoryForItem({"minecraft:water_bucket"}, {1})
 		T:checkInventoryForItem({"stone"}, {R.height * 2}, false) -- estimate only partial cloaking needed
-		print(thanks)
-		print("Creating safe drop ".. R.height.. " blocks deep")
-		print("Wait for my return!")
+		menu.colourPrint("Creating safe drop ".. R.height.. " blocks deep", colors.lightBlue)
+		menu.colourPrint("Wait for my return!", colors.yellow)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
 		retValue = createSafeDrop(R)
 	elseif R.choice == 15 then	-- single column bubble lift
+		local needSigns = true
 		utils.checkFuelNeeded(R.height * 6)
-		T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
-		T:checkInventoryForItem({"minecraft:soul_sand"}, {1})
-		T:checkInventoryForItem({"sign"}, {2})
+		--print(text, fg, bg, width)
+		menu.colourPrint("Checking if near ladder", colors.red)
+		T:turnRight(1)
+		local blockType = T:getBlockType("forward")
+		if blockType:find("ladder") == nil then
+			T:turnLeft(2)
+			blockType = T:getBlockType("forward")
+			if blockType:find("ladder") == nil then
+				needSigns = false
+			end
+			T:turnRight(1)
+		else
+			needSigns = false
+			T:turnLeft(1)
+		end
+		sleep(1)
+		if needSigns then
+			T:checkInventoryForItem({"sign"}, {2}, true, "Ladder not found")
+		else
+			menu.colourPrint("Ladder found, signs not required", colors.orange)
+			sleep(1)
+		end
+		if T:getBlockType("down"):find("bedrock") == nil then -- NOT bedrock below
+			T:checkInventoryForItem({"minecraft:water_bucket"}, {3})
+		else
+			T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
+		end
+		T:checkInventoryForItem({"minecraft:soul_sand", "minecraft:dirt"}, {1, 1}, true, "? use dirt as soul sand placeholder")
 		T:checkInventoryForItem({"stone"}, {R.height * 2}, false) -- estimate only partial cloaking needed
-		_, slots = T:getFirstEmptySlot() -- returns first empty slot, no of empty slots
-		T:checkInventoryForItem({"minecraft:bucket"}, {slots}, false, "More buckets for speed!")
-		print(thanks)
-		print("Creating bubble lift ".. R.height.. " blocks high")
-		print("Wait at the top via ladder...")
-		os.sleep(2)    -- pause for 2 secs to allow time to press esc
+		local _, slots = T:getFirstEmptySlot() -- returns first empty slot, no of empty slots
+		T:checkInventoryForItem({"minecraft:bucket"}, {slots}, false, "Add empty buckets for speed!")
+		menu.colourPrint("Creating bubble lift ".. R.height.. " blocks high", colors.lime)
+		if not needSigns then -- ladder present as signs not required
+			menu.colourPrint("Wait at the top via ladder...", colors.orange)
+		end
+		menu.colourPrint("\nSTAND ON THE LADDER FOR SAFETY!", colors.red)
+		menu.colourPrint("\nEnter to continue", colors.yellow)
+		read()
 		retValue = createBubbleLift(R)
-	
 	elseif R.choice == 16 then --QuickMine corridor
 		utils.checkFuelNeeded((R.width * 2 + R.length * 2) * 2)
 		T:checkInventoryForItem({"stone"}, {R.width * 2 + R.length * 2}, false)
 		T:checkInventoryForItem({"minecraft:torch"}, {math.floor((R.width * 2 + R.length * 2) / R.torchInterval)}, false)
 		T:checkInventoryForItem({"minecraft:bucket"}, {1}, false)
-		print("QuickMine corridor: R.subChoice "..R.width.. " x "..R.length)
+		menu.colourPrint("QuickMine corridor: R.subChoice "..R.width.. " x "..R.length, colors.lightBlue)
 		retValue = quickMineCorridor(R)
 	elseif R.choice == 17 then --QuickMine
 		utils.checkFuelNeeded(R.width * R.length)
 		T:checkInventoryForItem({"stone"}, {64})
 		T:checkInventoryForItem({"minecraft:bucket"}, {1}, false)
-		print("QuickMine rectangle: R.subChoice "..R.width.. " x "..R.length)
+		menu.colourPrint("QuickMine rectangle: R.subChoice "..R.width.. " x "..R.length, colors.lightBlue)
 		retValue = quickMine(R)
 	elseif R.choice == 18 then --Mine bedrock area
 		utils.checkFuelNeeded(R.width * R.length)
@@ -11263,13 +11729,13 @@ local function getTaskInventoryTo30(R)
 		if T:getItemSlot("minecraft:diamond_sword") > 0 then
 			inInventory = "minecraft:diamond_sword"
 		end
-		T:checkInventoryForItem({"minecraft:torch"}, {8}, false)
+		T:checkInventoryForItem({"minecraft:torch"}, {R.torchInterval}, false)
 		if inInventory == "minecraft:diamond_sword" then
-			print("Clearing Mineshaft and cobwebs")
+			menu.colourPrint("Clearing Mineshaft and cobwebs", colors.orange)
 		else
-			print("Clearing Mineshaft")
+			menu.colourPrint("Clearing Mineshaft", colors.yellow)
 		end
-		retValue = clearMineshaft(equippedRight, equippedLeft, inInventory) -- pass whether the sword is present
+		retValue = clearMineshaft(R, equippedRight, equippedLeft, inInventory) -- pass whether the sword is present
 		
 	-- FORESTRY
 	elseif R.choice == 21 then	-- Fell tree
@@ -11286,9 +11752,8 @@ local function getTaskInventoryTo30(R)
 			else
 				T:forward(1)
 			end
-			print("Press esc within 2 seconds!")
+			menu.colourPrint("Felling tree", colors.lime)
 			os.sleep(2)    -- pause for 2 secs to allow time to press esc
-			print("Felling tree")
 			T:harvestWholeTree("up")
 			while turtle.down() do end
 			retValue = {"Tree Harvested"}
@@ -11306,27 +11771,25 @@ local function getTaskInventoryTo30(R)
 		T:checkInventoryForItem({"polished"}, {4}) -- used to mark launch positions
 		T:checkInventoryForItem({"minecraft:water_bucket"}, {5})
 		R.useBlockType = T:getMostItem("", true)
-		print(thanks)
+		menu.colourPrint("Creating Tree Farm with "..R.useBlockType, colors.lime)
 		sleep(2)
-		print("Creating Tree Farm with "..R.useBlockType)
 		retValue = createTreefarm(R)
 	elseif R.choice == 23 then -- Plant treefarm
 		if R.subChoice == 1 then
 			utils.checkFuelNeeded(180)
 			T:checkInventoryForItem({"dirt"}, {16})
-			T:checkInventoryForItem({"sapling"}, {4}, "Max 16. NOT dark oak")
-		elseif R.subChoice == 3 then
+			T:checkInventoryForItem({"sapling"}, {16}, false, "Max 16. NOT dark oak")
+		elseif R.subChoice == 2 then
 			utils.checkFuelNeeded(180)
 			T:checkInventoryForItem({"dirt"}, {16})
-			T:checkInventoryForItem({"sapling"}, {4}, "Max 16. 4 saplings / tree")
+			T:checkInventoryForItem({"sapling"}, {16}, false, "Max 16. 4 saplings / tree")
 		end
-		print(thanks)
-		print("plantTreefarm starting: size "..R.subChoice)
+		menu.colourPrint("plantTreefarm starting: size "..R.subChoice, colors.lime)
 		retValue = plantTreefarm(R)
 	elseif R.choice == 24 then	-- Harvest treefarm
 		print(thanks)
 		os.sleep(2)
-		print("Harvesting treefarm starting")
+		menu.colourPrint("Harvesting treefarm starting", colors.lime)
 		retValue = harvestTreeFarm(R)
 	elseif R.choice == 25 then	-- Build wall / fence
 		utils.checkFuelNeeded(R.width * R.length * 2)
@@ -11338,14 +11801,14 @@ local function getTaskInventoryTo30(R)
 		if R.data == "barrel" then
 			T:checkInventoryForItem({"barrel"}, {4}, false)
 		end
-		R.useBlockType = T:getMostItem("", true)
-		print("Creating "..R.width.." x "..R.length.." walled enclosure with "..R.useBlockType)
+		R.useBlockType = T:getMostItem("", false) -- no excluded blocks, any block type
+		menu.colourPrint("Creating "..R.width.." x "..R.length.." walled enclosure", colors.yellow)
+		menu.colourPrint("Using: "..R.useBlockType, colors.orange)
 		retValue = createWallOrFence(R)
 	elseif R.choice == 26 then	-- clear natural forest
 		T:checkInventoryForItem({"minecraft:chest"}, {1})
 		T:checkInventoryForItem({"sapling"}, {64}, false)
-		print(thanks)
-		print("Clearing and replanting trees")
+		menu.colourPrint("Clearing and replanting trees", colors.lime)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
 		retValue = clearAndReplantTrees()
 	end
@@ -11363,7 +11826,6 @@ local function getTaskInventoryTo70(R)
 		T:checkInventoryForItem({"water_bucket"}, {4})
 		T:checkInventoryForItem({"chest", "barrel"}, {5,5})
 		T:checkInventoryForItem({"sapling"}, {1})
-		T:checkInventoryForItem({"crafting"}, {1}) -- will be placed inside barrel / chest next to water source
 		R.useBlockType = T:getMostItem("dirt", true) -- exclude dirt from count
 		print(thanks)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
@@ -11376,11 +11838,10 @@ local function getTaskInventoryTo70(R)
 		T:checkInventoryForItem({"water_bucket"}, {4})
 		T:checkInventoryForItem({"chest", "barrel"}, {5,5})
 		T:checkInventoryForItem({"sapling"}, {1})
-		T:checkInventoryForItem({"crafting"}, {1})
+		T:checkInventoryForItem({"crafting"}, {1}) -- will be placed inside barrel / chest next to water source
 		R.useBlockType = T:getMostItem("dirt", true) -- exclude dirt from count
-		print(thanks)
+		menu.colourPrint("Checking position...\n", colors.green)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		print("Checking position...\n")
 		retValue = createFarmExtension(R) -- subChoice = 1 for ahead, 2 for to the right
 	elseif R.choice == 33 then	-- manage modular farm
 		-- inventory checked in function depending on option taken
@@ -11393,7 +11854,8 @@ local function getTaskInventoryTo70(R)
 			T:checkInventoryForItem({"minecraft:torch"}, {math.ceil(R.length / R.torchInterval)}, false)
 		end
 		R.useBlockType = T:getMostItem("minecraft:torch") -- exclude torch
-		print("Creating "..R.length.." wall or fence with "..R.useBlockType)
+		menu.colourPrint("Creating "..R.length.." wall or fence", colors.green)
+		menu.colourPrint("Using: "..R.useBlockType, colors.orange)
 		retValue = createWallOrFence(R) -- barrels not included in R.data, R.width = 0 so only single length
 	elseif R.choice == 35 then	-- build fence
 		utils.checkFuelNeeded(R.width * R.length * 2)
@@ -11403,39 +11865,47 @@ local function getTaskInventoryTo70(R)
 			T:checkInventoryForItem({"minecraft:torch"}, {math.floor(quantity / R.torchInterval)}, false)
 		end
 		R.useBlockType = T:getMostItem("minecraft:torch") -- exclude torch
-		print("Creating "..R.width.." x "..R.length.." walled enclosure with "..R.useBlockType)
+		menu.colourPrint("Creating "..R.width.." x "..R.length.." walled enclosure", colors.green)
+		menu.colourPrint("Using: "..R.useBlockType, colors.orange)
 		retValue = createWallOrFence(R) -- barrels not included in R.data
 	-- OBSIDIAN
 	elseif R.choice == 41 then --harvest obsidian
 		utils.checkFuelNeeded(R.width * R.length * 3)
 		T:checkInventoryForItem({"stone"}, {R.width * R.length})
-		print(thanks)
+		T:checkInventoryForItem({"minecraft:bucket", "minecraft:lava_bucket"}, {1, 1}, false, "Get extra fuel as well!")
+		menu.colourPrint("Harvesting obsidian area: size "..R.width.. " x "..R.length, colors.orange)
 		sleep(2)
-		print("Harvesting obsidian area: size "..R.width.. " x "..R.length)
 		retValue = harvestObsidian(R)
 	elseif R.choice == 42 then --build nether portal
-		utils.checkFuelNeeded(R.length * R.height * R.width)
-		T:checkInventoryForItem({"minecraft:obsidian"}, {(R.length * R.height * R.width) - (R.width * 4)})
+		utils.checkFuelNeeded(R.length * R.height * R.width)	-- length = width when facing standard = 5 high 4 length 1 width
+		T:checkInventoryForItem({"minecraft:obsidian"}, {((R.length - 2 + R.height - 2) * R.width * 2)})
 		T:checkInventoryForItem({"stone"}, {R.width * 4})
 		R.useBlockType = T:getMostItem("obsidian", true) -- exclude obsidian from count
-		print(thanks)
+		menu.colourPrint("Building Nether portal", colors.orange)
 		sleep(2)
-		print("Building Nether portal")
 		retValue = createPortal(R)
 	elseif R.choice == 43 then --demolish nether portal
 		utils.checkFuelNeeded(20)
 		print("Demolishing Nether portal")
 		retValue = demolishPortal(R)
-	elseif R.choice == 44 then --undermine dragon towers
+	elseif R.choice == 44 then -- Strip mine Netherite
+		utils.checkFuelNeeded(R.length * 2)
+		T:checkInventoryForItem({"stone"}, {R.length * 4})
+		R.useBlockType = T:getMostItem("", true) -- exclude none, use stone only/netherrack
+		T:checkInventoryForItem({"cobble"}, {math.floor(R.length / 16) * 4}, true, "For marking Chunk boundaries")
+		T:checkInventoryForItem({"minecraft:bucket", "minecraft:lava_bucket"}, {1, 1})
+		T:checkInventoryForItem({"minecraft:torch"}, {math.floor(R.length / 16)}, false)
+		retValue = createStripMine(R)
+	elseif R.choice == 45 then --undermine dragon towers
 		utils.checkFuelNeeded(500)
 		T:checkInventoryForItem({"minecraft:cobblestone", "minecraft:cobbled_deepslate"}, {84, 84})
 		print("Undermining dragon towers")
 		retValue = undermineDragonTowers()
-	elseif R.choice == 45 then --deactivate dragon tower
+	elseif R.choice == 46 then --deactivate dragon tower
 		utils.checkFuelNeeded(50)
 		print("Deactivating dragon tower")
 		retValue = deactivateDragonTower()
-	elseif R.choice == 46 then --build dragon water trap
+	elseif R.choice == 47 then --build dragon water trap
 		utils.checkFuelNeeded(256)
 		T:checkInventoryForItem({"stone"}, {356})
 		T:checkInventoryForItem({"minecraft:obsidian"}, {1})
@@ -11443,7 +11913,7 @@ local function getTaskInventoryTo70(R)
 		T:checkInventoryForItem({"minecraft:water_bucket"}, {1})
 		print("Building dragon water trap")
 		retValue = createDragonTrap()
-	elseif R.choice == 47 then --build portal minecart station
+	elseif R.choice == 48 then --build portal minecart station
 		utils.checkFuelNeeded(200)
 		menu.colourPrint("Inventory after height measurement", colors.red)
 		menu.colourPrint("Enter to start measurement.", colors.lime)
@@ -11453,13 +11923,14 @@ local function getTaskInventoryTo70(R)
 		
 	-- CANAL BRIDGE
 	elseif R.choice == 51 then	-- continuous path over void/water/lava
-		utils.checkFuelNeeded(512) -- allow for 512 R.length
-		T:checkInventoryForItem({"stone"}, {R.length}, false)
-		--T:checkInventoryForItem({"minecraft:cobblestone",  "minecraft:dirt"}, {64, 64}, false)
-		T:checkInventoryForItem({"minecraft:torch"}, {math.floor(R.length/8)}, false)
-		print(thanks)
-		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		print("Building continuous path")
+		utils.checkFuelNeeded(R.length) -- allow for R.length
+		if R.data ~= "reduce" then
+			T:checkInventoryForItem({"stone"}, {R.length}, false)
+			if R.torchInterval > 0 then
+				T:checkInventoryForItem({"minecraft:torch"}, {math.floor(R.length/R.torchInterval)}, false)
+			end
+			print("Building continuous path")
+		end
 		retValue = utils.createPath(R) -- returns {numBlocks}
 	elseif R.choice == 52 then	-- simple 2 block corridor
 		utils.checkFuelNeeded(R.length)
@@ -11483,21 +11954,15 @@ local function getTaskInventoryTo70(R)
 			utils.checkFuelNeeded(2048) -- allow for 1024 R.length
 			length = 256
 		end
-		T:checkInventoryForItem({"stone"}, {length * 2})
+		T:checkInventoryForItem({"stone"}, {length})
+		R.useBlockType = T:getMostItem("", true) 
 		if R.data == 1 or (R.data == 2 and (R.subChoice == 2 or R.subChoice == 3 or R.subChoice == 5 or R.subChoice == 6)) then
 			T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
 		end
 		if torches > 0 then
 			T:checkInventoryForItem({"minecraft:torch"}, {torches}, false)
 		end
-		print(thanks)
-		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		print("Building canal")
-		if R.data == 1 then
-			retValue = createCanal(R) -- eg 0, 312, 1 = complete a canal 312 blocks long on top of the wall
-		else
-			retValue = createWaterCanal(R)
-		end
+		retValue = createWaterCanal(R)
 	elseif R.choice == 54 then	-- ice canal
 		local default = R.length
 		if R.length > 0 then
@@ -11506,16 +11971,28 @@ local function getTaskInventoryTo70(R)
 			default = 64
 			utils.checkFuelNeeded(default * 2) -- allow for 128 min R.length
 		end
-		--R.subChoice = 1,2,3,4 edge+torch, ice canal, air, edge no torch
-		if R.subChoice < 5 then	-- towpath with torches
-			--T:checkInventoryForItem({"trapdoor"}, {default})
-			T:checkInventoryForItem({"slab"}, {default})
-			if R.torchInterval > 0 then
-				T:checkInventoryForItem({"stone"}, {math.ceil(default / R.torchInterval)})
-				T:checkInventoryForItem({"torch"}, {math.ceil(default / R.torchInterval)}, false)
-			end
+		--[[
+			new canal
+			1 = left towpath- move to centre left
+			2 = centre left ice or hollow
+			3 = centre right ice or hollow
+			4 = right side - move to centre right
+			convert water canal
+			5 = left towpath
+			6 = centre left ice or air
+			7 = centre right ice or air
+			8 = right towpath
+		]]
+		if R.subChoice <= 5 or R.subChoice == 8 then	-- towpath
+			T:checkInventoryForItem({"slab"}, {default}, true, "Add slabs to length required")
 		end
-		if R.subChoice == 5 or R.data == "ice" then	-- ice canal with 2 spaces above
+		if R.torchInterval > 0 then
+			--checkInventoryForItem(items, quantities, required, message)
+			T:checkInventoryForItem({"stone"}, {math.ceil(default / R.torchInterval)}, true, "NOT bricks!")
+			R.useBlockType = T:getMostItem("", true) 
+			T:checkInventoryForItem({"torch"}, {math.ceil(default / R.torchInterval)}, false)
+		end
+		if R.data == "ice" then	-- ice canal with 2 spaces above
 			T:checkInventoryForItem({"minecraft:packed_ice", "minecraft:blue_ice"}, {math.ceil(R.length / 2), math.ceil(R.length / 2)}, false)
 		end
 		print(thanks)
@@ -11550,40 +12027,33 @@ local function getTaskInventoryTo70(R)
 		print("Building boat bubble lift")
 		retValue = createBoatLift(R)
 		--retValue = createBoatLift(R) -- R.subChoice:0=new, R.subChoice:1=extend, R.length:0=left, 1=right
-	elseif R.choice == 58 then	-- ice canal borders with trapdoors/slabs
-		local default = R.length
-		if R.length > 0 then
-			utils.checkFuelNeeded(R.length)
-		else
-			default = 64
-			utils.checkFuelNeeded(default * 2) -- allow for 128 min R.length
-		end
-		T:checkInventoryForItem({"trapdoor"}, {default})
-		T:checkInventoryForItem({"slab"}, {default})
-		T:checkInventoryForItem({"stone"}, {math.ceil(default / 8)})
-		T:checkInventoryForItem({"torch"}, {math.ceil(default / 8)}, false)
-		print(thanks)
-		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		print("Building ice canal barrier")
-		retValue = createIceCanalBorder(R) -- 0 R.length = continue while supplies last
 		
 	-- MOB SPAWNER
 	elseif R.choice == 61 then	--  9x9 hollow cube cobble lined
 		utils.checkFuelNeeded(600) -- allow for 600 moves
-		T:checkInventoryForItem({"stone"}, {512}, false, "Full cube uses ~700 blocks\nEstimate your requirements")
-		T:checkInventoryForItem({"slab"}, {1})
+		T:checkInventoryForItem({"slab","stone"}, {1, 3}, true, "Slab can be crafted from 3 stone")
+		if T:getItemSlot("stone") > 0 and T:getItemSlot("slab") == 0 then -- no slabs, but is stone
+			local craftOK, message = T:craft("slab")
+		end
+		if R.data == "chest" then
+			menu.colourText(nil, "~yellow~Chest(s) will be emptied first\nWait for me to exit and request\n~orange~around 700 stone!\n\n~lightGray~Enter to continue", true)
+			read()
+		else
+			T:checkInventoryForItem({"stone"}, {512}, false, "Full cube uses ~700 blocks\nEstimate your requirements")
+		end
 		print(thanks)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		retValue = createMobFarmCube(R, false) -- not blaze
+		retValue = createMobFarmCube(R) -- R.data = "spawner" or "chest": not blaze
 	elseif R.choice == 62 then	-- Blaze spawner
 		utils.checkFuelNeeded(2500) -- allow for 2500 moves
-		if R.subChoice == 1 then
-			T:checkInventoryForItem({"stone"}, {320})
-			T:checkInventoryForItem({"slab"}, {1})
+		if R.data == "blaze" then
+			T:checkInventoryForItem({"slab"}, {122}, true)
+			T:checkInventoryForItem({"stone"}, {576})
 			print("You will be asked for more assets later")
-			os.sleep(2)    -- pause for 2 secs to allow time to press esc
-		end
-		retValue = createMobFarmCube(R, true)	
+			print("Enter to continue")
+			read()
+		end	 -- else R.data == "restart"
+		retValue = createMobFarmCube(R)	--R.data = "blaze" or R.data = "restart"
 	elseif R.choice == 63 then	--  flood mob spawner
 		utils.checkFuelNeeded(60) -- allow for 60 moves
 		T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
@@ -11598,10 +12068,18 @@ local function getTaskInventoryTo70(R)
 		retValue = floodMobFarm(R)
 	elseif R.choice == 64 then -- build bubble lift on top of soul sand
 		utils.checkFuelNeeded(200) -- allow for 200 moves
+		T:checkInventoryForItem({"slab","stone"}, {6, 3}, true, "Slabs can be crafted from 3 stone")
+		if T:getItemSlot("stone") > 0 and T:getItemSlot("slab") == 0 then -- no slabs, but is stone
+			local craftOK, message = T:craft("slab")
+		end
 		T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
-		T:checkInventoryForItem({"stone"}, {128})
+		T:checkInventoryForItem({"stone"}, {256})
 		if T:getBlockType("down") ~= "minecraft:soul_sand" then
 			T:checkInventoryForItem({"minecraft:soul_sand"}, {1})
+		end
+		T:checkInventoryForItem({"hopper"}, {1}, false)
+		if T:getItemSlot("hopper") > 0 then
+			T:checkInventoryForItem({"chest"}, {2})
 		end
 		print(thanks)
 		os.sleep(2)    -- pause for 2 secs to allow time to press esc
@@ -11684,7 +12162,7 @@ local function getTaskInventory(R)
 			print(thanks)
 			sleep(2)
 			print("Clearing area: size "..R.width.. " x "..R.length)
-			retValue = clearArea(R, true)
+			retValue = clearArea(R)
 		elseif R.choice == 72 then --Clear rectangle
 			-- R.choice, R.width(R.subChoice), R.length(R.width), up(R.length), down(R.height) from getTask()
 			utils.checkFuelNeeded(R.width * R.length)
@@ -11936,6 +12414,23 @@ local function getTaskInventory(R)
 	return retValue
 end
 
+local function test(R)
+	local lib = {}
+	
+	function lib.dig(direction, bypass, slot)
+		direction = direction or "forward"
+		slot = slot or 1
+		bypass = bypass or true
+		
+		print("direction: "..direction)
+		print("bypass: "..tostring(bypass))
+		print("slot: "..slot)
+		
+	end
+	lib.dig("down")
+	read()
+end
+
 local function main()
 	local lib = {}
 	
@@ -12010,28 +12505,85 @@ local function main()
 		menu = require("lib.menu")
 		T = require("lib.clsTurtle").new(false) -- true enables logfile to log.txt note dot NOT colon
 		T:clear()
+		doContinue = false	-- reset
 		if args[1] ~= nil then
-			if args[1] == "farm" then
+			if args[1]:sub(1) == "h" then
+local help =
+[[... = any following characters
+
+tk v...     = mc/ccTweaked versions
+tk log      = enable logging
+tk log d... = enable logging + debug
+tk find     = writes locate.txt 
+tk test     = runs test(R)
+tk farm     = runs manageFarm(R)
+
+
+
+Enter to exit]]
+				menu.colourPrint(help, colours.yellow)
+				read()
+			elseif args[1] == "log" then
+				if args[2]:sub(1) == "d" then
+					dbug = true	-- set dbug flag
+					menu.colourPrint("Logging and debugging enabled", colors.lime)
+				else
+					menu.colourPrint("Logging enabled", colors.lime)
+				end
+				if T:getLogExists() then
+					if menu.getBoolean("Delete existing log file? (y/n)", 3, colors.orange) then
+						T:deleteLog()
+						menu.colourPrint("Log file deleted", colors.yellow)
+					end
+				end
+				T:setUseLog(true)
+				doContinue = true
+				if dbug then
+					menu.colourPrint("Enter to continue...", colors.lightBlue)
+					read()
+				end
+			elseif args[1] == "farm" then
 				R.silent = true
 				R.data = "farm"
 				R.auto = true
 				manageFarm(R)
 			--elseif args[1] == "tree" then
 				--manageTreeFarm() -- use file to read status
-			elseif args[1] == "help" then
-				-- missing turtle: player used 'tk help'
+			elseif args[1] == "find" then
+				-- missing turtle: player used 'tk find'
 				T:setUseLog(true)
 				T:setLogFileName("locate.txt")
 				T:appendLine("Booting succeeded")
 				T:appendLine("Block ahead: "..T:getBlockType("forward"))
 				T:appendLine("Block above: "..T:getBlockType("up"))
 				T:appendLine("Block below: "..T:getBlockType("down"))
+			elseif args[1] == "test" then
+				test(R)
+			elseif args[1]:find("v") ~= nil then
+				print("_HOST:")
+				print()
+				print(_HOST)
+				print()
+				print("Minecraft major version: "..mcMajorVersion)
+				print("Minecraft minor version: "..mcMinorVersion)
+				print("ccTweaked major version: "..ccMajorVersion)
+				print("ccTweaked minor version: "..ccMinorVersion)
+				print("tk version:              "..tkVersion)
+				print("clsTurtle version:       "..version)
+				print("\nEnter to exit")
+				read()
 			end
 		else
+			doContinue = true
+		end
+		if doContinue then
 			print("Minecraft major version: "..mcMajorVersion)
 			print("Bedrock level: "..bedrock)
 			if T:getUseLog() then
-				print("Logging enabled")
+				if T:saveToLog("Started with logging enabled", true) then
+					menu.colourPrint("\nEnter to continue...", colors.lightBlue)
+					read()
+				end
 			else
 				print("Logging disabled")
 			end	
@@ -12045,7 +12597,7 @@ local function main()
 			end
 		end
 		T:clear()
-		table.insert(result, "\nThank you for using 'survival toolkit'")
+		table.insert(result, "Thank you for using 'survival toolkit'")
 		local clr = {colors.yellow, colors.orange, colors.green, colors.lightBlue}
 		local count = 1
 		for _, value in ipairs(result) do
