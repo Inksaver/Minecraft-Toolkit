@@ -1,4 +1,4 @@
-version = 20230723.1200
+version = 20241103.1400
 --[[
 	Last edited: see version YYYYMMDD.HHMM
 	This is meant to be used as a library for any of your programs.
@@ -380,14 +380,14 @@ local function drawMenu(prompt, options, width, height, pp, altMenuPrompt)
 		end
 	end
 	local numOptions = #options	
-	if numOptions > height - 3 then
-		numOptions = height - 3
+	if numOptions > height - 2 then -- 3
+		numOptions = height - 2		-- 3
 	end
 	lib.clear()
 	lib.print(prompt, pp.prompt, colors.black, width)
 	for i = 1, numOptions do
 		local trimOption = string.sub(options[i], 1, width - 5)
-		if i < 10 then
+		if i < 10 then -- line up indexes
 			lib.print("\t"..i..") ".."\t"..trimOption, pp.itemColours[i], colors.black, width)
 		else
 			lib.print("\t"..i..") "..trimOption, pp.itemColours[i], colors.black, width)
@@ -400,8 +400,8 @@ local function drawMenu(prompt, options, width, height, pp, altMenuPrompt)
 end
 
 local function menu(prompt, options, pp, altMenuPrompt)
-	--turtle   terminal size = 39 x 13 -- max menu options = 10, max option length = 34
-	--computer terminal size = 51 x 19 -- max menu options = 16, max option length = 47
+	--turtle   terminal size = 39 x 13 -- max menu options = 11, max option length = 34
+	--computer terminal size = 51 x 19 -- max menu options = 17, max option length = 47
 	--local width, height = term.getSize()
 	local errorType = ""
 	local choice = nil
@@ -427,7 +427,7 @@ local function menu(prompt, options, pp, altMenuPrompt)
 		if errorType ~= "" then
 			errorMessage(row, errorType, choice, 1, #options)
 			--lib.write(menuPrompt, pp.menuPrompt, colors.black, width, true)
-			col, row = drawMenu(prompt, options, width, height, pp)
+			col, row = drawMenu(prompt, options, width, height, pp, altMenuPrompt)
 		end
 		choice = read()
 		if choice == "" then -- enter only
