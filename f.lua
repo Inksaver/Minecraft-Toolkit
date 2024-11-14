@@ -1,4 +1,4 @@
-version = 20230801.1200
+version = 20240828.1400
 -- https://pastebin.com/KXCakmNn
 -- pastebin get KXCakmNn f.lua
 -- Last edited: see version YYYYMMDD.HHMM 
@@ -26,7 +26,9 @@ obstructed. No blocks broken
 f 10 d :moves 10 blocks forward unless
 bedrock. Blocks are removed.
 
-'d' or any character / string is ok]]
+Dig blocks above/below use + -
+
+f 10 +- forward 10, dig above and below]]
 usage.up = [[
 u 10  :moves 10 blocks up unless
 obstructed. No blocks broken
@@ -37,9 +39,13 @@ bedrock. Blocks are removed.
 'd' or any character / string is ok]]
 args = {...}
 
+local above = false
+local below = false
+	
 function checkArgs(direction)
 	local numBlocksRequested = 1
 	local doDig = false
+	
 	if args[1] ~= nil then
 		if args[1]:lower() == "h" then
 			term.clear()
@@ -54,8 +60,14 @@ function checkArgs(direction)
 				error()
 			end
 		end
-		if args[2] ~= nil then -- any character here will work
+		if args[2] ~= nil then -- any character(s) here will work
 			doDig = true
+			if args[2]:lower():find("+") ~= nil then
+				above = true
+			end
+			if args[2]:lower():find("-") ~= nil then
+				below = true
+			end
 		end
 	end
 	return numBlocksRequested, doDig
@@ -92,25 +104,25 @@ function doMoves(numBlocksRequested, doDig, direction)
 	end
 	
 	for i = 1, numBlocksRequested, 1 do
-		local moveOK, moveError = Move() -- try to move forward/up/down
-		if doDig then
+		if above then turtle.digUp() end	-- user added + to arg
+		if below then turtle.digDown() end	-- user added - to arg
+		local moveOK, moveError = Move() 	-- try to move forward/up/down
+		if doDig then						-- true if ANY args passed
 			if moveOK then
 				numBlocksMoved = numBlocksMoved + 1
-			else -- did not move due to obstruction
-				-- while moveOK == false do -- same effect if you prefer.
+			else 							-- did not move due to obstruction
 				if direction == "backwards" and not turned then
 					turnRound()
 					turned = true
 					Move = turtle.forward
 				end
-				while not moveOK do -- did not move if obstruction
+				while not moveOK do 		-- did not move if obstruction
 					local digOK, digError = Dig()
 					if digOK then
-						sleep(0.5) -- allow sand / gravel to drop if digging forward / up
-					else -- unable to dig, or nothing to dig
+						sleep(0.5) 			-- allow sand / gravel to drop if digging forward / up
+					else 					-- unable to dig, or nothing to dig
 						if digError == "Unbreakable block detected" then
-							errorMsg = digError
-							break
+							return numBlocksMoved, digError
 						end
 					end
 					moveOK, moveError = Move() -- try to move forward/up/down again
@@ -128,7 +140,8 @@ function doMoves(numBlocksRequested, doDig, direction)
 			end
 		end
 	end
-	
+	if above then turtle.digUp() end
+	if below then turtle.digDown() end
 	if turned then -- was "backwards" but obstuction rotated 180 so need to turn round again
 		turnRound()
 	end
