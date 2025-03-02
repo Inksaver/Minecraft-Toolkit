@@ -1,4 +1,4 @@
-version = 20241111.1400
+version = 20241122.1730
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -122,13 +122,27 @@ function network.addToStorageList(storageType, itemKey, storageName, writeToFile
 	-- itemKey is a table, so is passed byRef. No need to return a value
 	-- eg itemKey: [ "minecraft:dark_oak_sapling" ] = {"minecraft:barrel_94", "minecraft:barrel_96"}
 	-- storageName = "minecraft:barrel_99"
-	for _, storage in ipairs(itemKey) do	-- is "minecraft:barrel_99" already in the list?
-		if storage == storageName then
-			return	-- exit function
-		end
+	local itemTable = {}
+	if storageType == "chest" then
+		itemTable = chestItems[itemKey]	-- eg [ "minecraft:dark_oak_sapling" ] = {"minecraft:barrel_94", "minecraft:barrel_96"}
+	else
+		itemTable = barrelItems[itemKey]
 	end
-	-- not found so add to table. return not required as funcion is ended
-	table.insert(itemKey, storageName)	-- add to table eg table[ "minecraft:dark_oak_sapling" ] = {"minecraft:barrel_94", "minecraft:barrel_96",, "minecraft:barrel_99"}
+	if itemTable == nil then				-- key does not match. This item not previously stored
+		if storageType == "chest" then
+			chestItems[itemKey] = {storageName}	-- eg U.chestItems[minecraft:diorite] = {chest_105}
+		else
+			barrelItems[itemKey] = {storageName}
+		end
+	else
+		for _, storage in ipairs(itemTable) do	-- is "minecraft:barrel_99" already in the list?
+			if storage == storageName then
+				return	-- exit function
+			end
+		end
+		-- not found so add to table. return not required as funcion is ended
+		table.insert(itemTable, storageName)	-- add to table eg table[ "minecraft:dark_oak_sapling" ] = {"minecraft:barrel_94", "minecraft:barrel_96",, "minecraft:barrel_99"}
+	end
 	if writeToFile then
 		network.updateList(storageType)
 	end
@@ -188,6 +202,7 @@ function network.checkInventory(inventory, itemName, itemsPerSlot, matchPart)
 			end
 		end
 	end
+	T:saveToLog("network.checkInventory return inStock = "..inStock..", canStore = "..canStore..", partMatch = "..tostring(partMatch))
 	return inStock, canStore, partMatch -- eg 1, 3647, false if contains only 1 matching item in otherwise empty chest
 end
 
@@ -561,15 +576,16 @@ function network.sendItemToNetworkStorage(R, storageType, itemToSend, amountToSe
 	local lib = {}
 	
 	function lib.sendItem(savedItems, peripheralNames, turtleName, turtleSlot, item, slotCount, itemsPerSlot)
+		local storageToUse = ""
 		local storageList = lib.getStorageFromList(savedItems, item, slotCount, itemsPerSlot)	-- try from savedList
 		if storageList == nil then	-- no match found, but use first one found with network.wrapModem
 			T:saveToLog("No storage with matching items found, using first empty chest")
-			storageToUse = lib.findEmptyStorage(peripheralNames, item, itemsPerSlot)
+			storageToUse = lib.findEmptyStorage(peripheralNames, item, itemsPerSlot, slotCount)
 		else
 			T:saveToLog("Storage with matching items found, checking capacity")
 			storageToUse  = lib.checkCapacity(storageList, item, slotCount, itemsPerSlot)
 			if storageToUse == "" then	-- no capacity in known storage list, so start a new one
-				storageToUse = lib.findEmptyStorage(peripheralNames, item, itemsPerSlot)
+				storageToUse = lib.findEmptyStorage(peripheralNames, item, itemsPerSlot, slotCount)
 			end
 		end
 		--network.moveItemsFromTurtle(turtleName, toInventoryName, fromTurtleSlot, quantity, toSlot)
@@ -577,13 +593,15 @@ function network.sendItemToNetworkStorage(R, storageType, itemToSend, amountToSe
 		network.moveItemsFromTurtle(turtleName, storageToUse, turtleSlot, slotCount)
 	end
 	
-	function lib.findEmptyStorage(peripheralNames, itemName, itemsPerSlot)
+	function lib.findEmptyStorage(peripheralNames, itemName, itemsPerSlot, itemCount)
+		T:saveToLog("lib.findEmptyStorage("..textutils.serialise(peripheralNames,{compact = true})..", itemName = "..itemName.. ", itemsPerSlot = "..itemsPerSlot)
 		for store = 1, #peripheralNames do 
 			inStock, canStore, partMatch = network.checkInventory(peripheralNames[store], itemName, itemsPerSlot, "")
-			if canStore > 64 then
+			if canStore > itemCount then
 				return peripheralNames[store]
 			end
 		end
+		return nil
 	end
 	
 	function lib.getStorageFromList(savedItems, item, sendAmount, itemsPerSlot)
@@ -668,14 +686,23 @@ function network.sendItemToNetworkStorage(R, storageType, itemToSend, amountToSe
 				T:saveToLog("network.sendItemToNetworkStorage(R, '"..itemToSend.."', sourceSlot = "..sourceSlot..", slotCount = "..slotCount) --..", data = "..textutils.serialise(data)..")")
 				if sourceSlot > 0 then									-- item is present in turtle inventory
 					local newStore = false
+					local sent = 0
 					local storageList = lib.getStorageFromList(savedItems, itemToSend, slotCount, itemsPerSlot)
-					storageToUse  = lib.checkCapacity(storageList, itemToSend, slotCount, itemsPerSlot)
-					if storageToUse == "" then	-- no capacity in known storage list, so start a new one
-						storageToUse = lib.findEmptyStorage(peripheralNames, itemToSend, itemsPerSlot)
-						newStore = true
+					if storageList == nil then
+						T:saveToLog("not found in any storage, finding empty")
+						storageToUse = lib.findEmptyStorage(peripheralNames, itemToSend, itemsPerSlot, total)
+						T:saveToLog("new storage: "..storageToUse.." is available")
+						network.addToStorageList(storageType, itemToSend, storageToUse, true)
+						sent = network.moveItemsFromTurtle(turtleName, storageToUse, sourceSlot, slotCount)	
+					else
+						storageToUse  = lib.checkCapacity(storageList, itemToSend, slotCount, itemsPerSlot)
+						if storageToUse == "" then	-- no capacity in known storage list, so start a new one
+							storageToUse = lib.findEmptyStorage(peripheralNames, itemToSend, itemsPerSlot, total)
+							newStore = true
+						end
+						T:saveToLog("sent = network.moveItemsFromTurtle(turtleName = "..turtleName..", storageToUse = "..storageToUse..", sourceSlot = "..sourceSlot..", slotCount = ".. slotCount)
+						sent = network.moveItemsFromTurtle(turtleName, storageToUse, sourceSlot, slotCount)
 					end
-					T:saveToLog("sent = network.moveItemsFromTurtle(turtleName = "..turtleName..", storageToUse = "..storageToUse..", sourceSlot = "..sourceSlot..", slotCount = ".. slotCount)
-					local sent = network.moveItemsFromTurtle(turtleName, storageToUse, sourceSlot, slotCount)
 					totalSent = totalSent + sent
 					if minSend > 0 and totalSent >= minSend then
 						return totalSent
@@ -9807,9 +9834,6 @@ local function harvestTreeFarm(R) -- 24
 		T:go(finish)
 		if R.networkFarm then
 			T:go("R1F3 L1")			-- on modem
-			--storageType, itemRequired, countRequired, toTurtleSlot, ignoreStock
-			network.getItemFromNetwork("barrel", "minecraft:stick", 64, nil, false)
-			network.getItemFromNetwork("barrel", "minecraft:apple", 64, nil, false)
 			network.emptyInventory(R, {"sapling", "propagule", "dirt", "crafting"}, {"all"}, true)
 		end
 	end
@@ -13417,19 +13441,6 @@ Place me on the floor above pit / edge
 ~lightGray~|*|~blue~W|W~lightGray~|*|                      water  0
 
 ~yellow~Enter 1 to use ~lime~2 ~yellow~turtles or 2 to use ~orange~4]]	-- initial menu for water canal
-	info.sub[112] =
-[[~yellow~If turtle moved to other network, lists
-~lightGray~'barrelItems.lua' ~yellow~and ~lightGray~'chestItems.lua'
-~lime~are automatically updated.
-~yellow~If more storage has been added these 
-lists are also automatically updated.
-
-~cyan~This option manually updates the lists.
-
-~yellow~For best results add/remove items
-in existing ~brown~chests ~yellow~and ~brown~barrels.
-~red~Add at least one item in any ~brown~chest ~red~/
-~brown~barrel ~red~to include it in the new lists.]] -- explains list creation
 	local line = menu.clear()
 	if menuLevel == 1 then -- general help
 		line = menu.colourText(line, info.main[menuItem], true, true)
@@ -13582,7 +13593,6 @@ local function getTaskOptions()
 	table.insert(options,
 	{
 		"Craft an item",
-		"update saved storage lists",
 		"Mystical Agriculture Essence tools"
 	})
 	
@@ -13713,8 +13723,7 @@ local function getTaskColours()
 	})
 	table.insert(options,
 	{
-		colors.brown, 		-- Craft item
-		colors.yellow,		-- update lists
+		colors.red, 		-- Craft item
 		colors.magenta, 	-- MysticalAgriculture 
 	})
 	return options
@@ -14528,7 +14537,7 @@ spawner.~yellow~ (can be behind a safety wall)
 			R.length 	= menu.getInteger("Length of the wall (1-60) ", 1, 60, nil, colors.yellow)
 			R.height 	= menu.getInteger("Fixed depth or 0 = to floor ", 0, 60, nil, colors.yellow)
 		end
-	-- for 83 see 710
+	-- for 83 see 710 direct movement
 	elseif R.choice == 84 then -- Clear area of water bounded by blocks
 		R.width 	= menu.getInteger("Width of water (0=autodetect) ", 0, 64, nil, colors.yellow)
 		if R.width > 0 then
@@ -14665,7 +14674,7 @@ spawner.~yellow~ (can be behind a safety wall)
 		R.depth = menu.getInteger("Go down to level? ("..R.height - 2 .." to "..bedrock + 5 ..")", bedrock + 5 ,R.height - 2, nil, colors.blue, nil, bedrock + 5)
 	
 -- 11 Network tools
-	elseif R.choice == 111 or 112 then -- craft an item/update saved item lists
+	elseif R.choice == 111 then -- craft an item
 		local modem = peripheral.find("modem")		-- find modem
 		if modem == nil then
 			menu.colourText(1, "~yellow~I need to be placed close to an\n"..
@@ -14674,7 +14683,7 @@ spawner.~yellow~ (can be behind a safety wall)
 				  "\n\n~blue~(Right-click modem to activate)\n")
 				error()
 		end
-	elseif R.choice == 113 then -- mystical Agriculture essence tools
+	elseif R.choice == 112 then -- mystical Agriculture essence tools
 		if T:getBlockType("forward") ~= "minecraft:crafter" then
 			menu.colourText(1, "~yellow~I need to be placed in front of a\n"..
 				  "~red~minecraft:crafter ~yellow~(mc 1.21.1) as \n"..
@@ -15663,11 +15672,7 @@ local function getTaskInventory(R)
 			retValue = createBorehole(R)
 		elseif R.choice == 111 then	--craft an item
 			retValue = utils.craftItem(R)
-		elseif R.choice == 112 then	--update lists
-			network.updateList("barrel")
-			network.updateList("chest")
-			retValue = {"lists: chestItems / barrelItems updated"}
-		elseif R.choice == 113 then	--MysticalAgriculture essence conversion
+		elseif R.choice == 112 then	--MysticalAgriculture essence conversion
 			retValue = utils.convertEssence(R)
 		end
 	end
