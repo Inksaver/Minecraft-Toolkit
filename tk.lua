@@ -1,4 +1,4 @@
-version = 20241122.1730
+version = 20250306.1030
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -12409,6 +12409,19 @@ Used to measure
 
 
 ]])
+	table.insert(info.main,
+	[[           ~yellow~NETWORK TOOLS:
+Still on ToDo List!
+
+
+
+	
+
+
+
+
+
+]])
 
 	info.sub[11] = 
 [[~yellow~Place me on the ground at ~red~^~yellow~
@@ -13825,6 +13838,7 @@ local function chooseTask(R)
 		if menuState == 0 then
 			pp.itemColours = menuColours.main
 			local mainChoice, modifier = menu.menu(mainPrompt, options.main, pp) -- open main menu options
+			T:saveToLog("chooseTask(): mainChoice = "..mainChoice..", modifier = "..modifier)
 			if modifier == "q" then
 				R.choice = -1
 				return R -- quit application
@@ -13840,6 +13854,7 @@ local function chooseTask(R)
 			pp.prompt = colors.yellow
 			pp.itemColours = menuColours[R.choice]
 			subChoice, modifier = menu.menu(subPrompt, options[R.choice], pp, "Back = 'q' or number + Enter: ") -- open submenu options
+			T:saveToLog("chooseTask(): subChoice = "..subChoice..", modifier = "..modifier)
 			if modifier == "q" then
 				R.choice = 0	-- return to root menu. change this to -1 if quit application preferred
 				return R -- quit task system so it re-starts first menu
@@ -14537,7 +14552,7 @@ spawner.~yellow~ (can be behind a safety wall)
 			R.length 	= menu.getInteger("Length of the wall (1-60) ", 1, 60, nil, colors.yellow)
 			R.height 	= menu.getInteger("Fixed depth or 0 = to floor ", 0, 60, nil, colors.yellow)
 		end
-	-- for 83 see 710 direct movement
+	-- for 83 see 710
 	elseif R.choice == 84 then -- Clear area of water bounded by blocks
 		R.width 	= menu.getInteger("Width of water (0=autodetect) ", 0, 64, nil, colors.yellow)
 		if R.width > 0 then
