@@ -1,4 +1,4 @@
-version = 20250306.1030
+version = 20250306.1930
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -13854,7 +13854,7 @@ local function chooseTask(R)
 			pp.prompt = colors.yellow
 			pp.itemColours = menuColours[R.choice]
 			subChoice, modifier = menu.menu(subPrompt, options[R.choice], pp, "Back = 'q' or number + Enter: ") -- open submenu options
-			T:saveToLog("chooseTask(): subChoice = "..subChoice..", modifier = "..modifier)
+			T:saveToLog("chooseTask(): subChoice = "..tostring(subChoice)..", modifier = "..modifier)
 			if modifier == "q" then
 				R.choice = 0	-- return to root menu. change this to -1 if quit application preferred
 				return R -- quit task system so it re-starts first menu
