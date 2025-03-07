@@ -1,4 +1,4 @@
-version = 20250306.1930
+version = 20250307.0730
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -13781,10 +13781,14 @@ local function chooseTask(R)
 	
 	function lib.showItems(listOfItems)
 		T:clear()
-		if next(listOfItems) ~= nil then
-			menu.colourPrint("Items required:", colors.lime)
-			for k,v in pairs(listOfItems) do
-				menu.colourPrint("  "..v, colors.lightGray)
+		if listOfItems ~= nil then
+			if next(listOfItems) ~= nil then
+				menu.colourPrint("Items required:", colors.lime)
+				for k,v in pairs(listOfItems) do
+					menu.colourPrint("  "..v, colors.lightGray)
+				end
+			else
+				menu.colourPrint("No items required", colors.lime)
 			end
 		else
 			menu.colourPrint("No items required", colors.lime)
@@ -13838,7 +13842,7 @@ local function chooseTask(R)
 		if menuState == 0 then
 			pp.itemColours = menuColours.main
 			local mainChoice, modifier = menu.menu(mainPrompt, options.main, pp) -- open main menu options
-			T:saveToLog("chooseTask(): mainChoice = "..mainChoice..", modifier = "..modifier)
+			T:saveToLog("chooseTask(): mainChoice = "..tostring(mainChoice)..", modifier = "..tostring(modifier))
 			if modifier == "q" then
 				R.choice = -1
 				return R -- quit application
@@ -13854,7 +13858,7 @@ local function chooseTask(R)
 			pp.prompt = colors.yellow
 			pp.itemColours = menuColours[R.choice]
 			subChoice, modifier = menu.menu(subPrompt, options[R.choice], pp, "Back = 'q' or number + Enter: ") -- open submenu options
-			T:saveToLog("chooseTask(): subChoice = "..tostring(subChoice)..", modifier = "..modifier)
+			T:saveToLog("chooseTask(): subChoice = "..tostring(subChoice)..", modifier = "..tostring(modifier))
 			if modifier == "q" then
 				R.choice = 0	-- return to root menu. change this to -1 if quit application preferred
 				return R -- quit task system so it re-starts first menu
