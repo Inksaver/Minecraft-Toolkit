@@ -1,4 +1,4 @@
-version = 20250307.0730
+version = 20250308.2030
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -4468,7 +4468,7 @@ local function createBubbleLift(R) -- 15
 	function lib.addSign()
 		turtle.back()
 		T:placeWater("forward") 
-		T:go("L1B1")
+		T:go("L1C1B1")
 		T:place("sign", "forward")
 	end
 	
@@ -4482,6 +4482,9 @@ local function createBubbleLift(R) -- 15
 				water = toBuild				-- reduce to correct amount
 			end
 			T:up(built)						-- climb to top of existing lift
+			if T:getBlockType("forward"):find("sign") ~= nil then
+				T:up(1)	
+			end
 			while water > 0 and toBuild > 0 do
 				lib.addLayer()
 				water = water - 1
@@ -4492,7 +4495,6 @@ local function createBubbleLift(R) -- 15
 			if toBuild > 0 then
 				built = lib.goToWater() --return to source
 				toBuild = toHeight - built
-				--lib.fillBuckets(toBuild)
 			end
 		end
 	end
@@ -4510,32 +4512,17 @@ local function createBubbleLift(R) -- 15
 				T:place("stone", "up")
 			end
 		end
-		T:go("D1 C1R1x1 R1C1 R1F1 R1x1 L2x1 L1C1 x1") -- delete water sources
-		T:go("D1 C1R1x1 R1")
-		local blockType = T:getBlockType("forward")
-		if blockType:find("dirt") == nil and blockType:find("soul") == nil then -- not dirt or soul sand in front
-			T:go("C1")
-		end
-		T:go("R1F1 R1x1 L2x1 L1C1 x1")
 	end
-	
-	function lib.fillBuckets(toBuild, withSort)
-		local emptySlots, water = lib.stackBuckets(withSort)-- gets no of empty slots + no of water buckets
-		if water < toBuild then 					-- no of water buckets onboard less than required quantity
-			for i = 1, toBuild do 					-- fill required no of buckets up to max space in inventory
-				if emptySlots == 0 then 			-- inventory full
-					break
-				else
-					if T:getWater("down") then
-						water = water + 1
-						sleep(0.5)
-					end
-				end
-				emptySlots = lib.getEmptySlots()
+		
+	function lib.fillBuckets(withSort)
+		local emptyBuckets = T:getItemCount("minecraft:bucket")
+		for i = 1, emptyBuckets do
+			if T:getWater("down") then
+				sleep(0.5)
 			end
 		end
 		
-		return water
+		return T:getItemCount("minecraft:water_bucket")
 	end
 	
 	function lib.getEmptySlots()
@@ -4591,7 +4578,6 @@ local function createBubbleLift(R) -- 15
 		return emptySlots, water
 	end
 	
-	
 	T:go("C1R1")												-- place block next to ladder support block, turn right to check ladder
 	local blockType = T:getBlockType("forward") 				-- Is there a ladder to the right?
 	if blockType:find("ladder") == nil then
@@ -4624,7 +4610,9 @@ local function createBubbleLift(R) -- 15
 	T:turnRight(2)											-- facing backward
 	T:placeWater("forward") 								-- place back water source
 	T:go("R2U1") 											-- facing forward, U1, above centre of water source
-	lib.fillBuckets(R.height, true)							-- fill as many buckets as required or until inventory full, sort inventory as well
+
+	--lib.fillBuckets(R.height, true)							-- fill as many buckets as required or until inventory full, sort inventory as well
+	lib.fillBuckets(true)							-- fill as many buckets as required or until inventory full, sort inventory as well
 	local nextToLadder = false
 	--T:go("F2R1")
 	T:go("x0F1 x0F1C1 R1") 									-- move forward 2 taking out blocks above, plug behind soul sand
@@ -4642,9 +4630,9 @@ local function createBubbleLift(R) -- 15
 	if nextToLadder then								-- if nextToLadder, no need for signs
 		utils.goBack(2) 								-- return to source centre
 	else
-		T:go("F2 L1C1R1C1R1C1L1", false, 0, true)		-- prepare layer 1
+		T:go("L1C1 R1C1 R1C1 L1", false, 0, true)		-- prepare layer 1
 		lib.addSign()
-		T:go("U1F1R1F1 L1C1R1C1R1C1L1", false, 0, true)	-- prepare layer 2
+		T:go("U1F1 R1F1 L1C1 R1C1 R1C1 L1", false, 0, true)	-- prepare layer 2
 		lib.addSign()
 		T:go("L1F1 R1F1R1", false, 0, true)	 			-- above source, level 2
 	end
@@ -12181,7 +12169,7 @@ local function getTaskItemsList()
 	text[12] = {"2 stairs for each level", "6 * levels stone", "1 chest"} 								-- stairs up/down
 	text[13] = {"24 torch (optional)", "1 bucket (optional)", "64 stone", "1 chest"} 					-- mine at this level
 	text[14] = {"levels * 4 stone","water_bucket"} 														-- safe drop to water block
-	text[15] = {"levels * 4 stone", "1 soul sand", "1 water bucket"} 									-- single column bubble lift
+	text[15] = {"1 soul sand", "3 water bucket", "levels * 4 stone", "1-9 buckets (optional)"} 			-- single column bubble lift
 	text[16] = {"1 bucket (optional)", "64 stone"} 														-- quick corridor
 	text[17] = {"1 bucket (optional)", "64 stone"}														-- quick mine
 	text[18] = {"1 bucket (optional)"}																	-- mine to bedrock
@@ -13946,14 +13934,14 @@ local function getTask(R)
 		local destLevel = menu.getInteger("Go down to level? ("..currentLevel - 2 .." to "..bedrock + 5 ..")", bedrock + 5 , currentLevel - 2, nil, colors.blue, nil, bedrock + 5)
 		R.height 	= math.abs(destLevel - currentLevel)
 	elseif R.choice == 15 then	-- bubble lift
-		local currentLevel = menu.getInteger("Current level (F3->Y coord)? ", bedrock + 5 , ceiling, nil, colors.blue, nil, bedrock + 5)
-		local destLevel = menu.getInteger("Go up to level? ("..currentLevel + 2 .." to "..ceiling ..") ", currentLevel + 2, ceiling, nil, colors.lightGray)
+		R.currentLevel = menu.getInteger("Current level (F3->Y coord)? ", bedrock + 5 , ceiling, nil, colors.blue, nil, bedrock + 5)
+		local destLevel = menu.getInteger("Go up to level? ("..R.currentLevel + 2 .." to "..ceiling ..") ", R.currentLevel + 2, ceiling, nil, colors.lightGray)
 		--[[if currentLevel <= bedrock + 5 then
 			if menu.getBoolean("Confirm close to bedrock (y / n) ", nil, colors.yellow, colors.black) then
 				R.data = "bedrock"
 			end
 		end]]
-		R.height 	= math.abs(destLevel - currentLevel)
+		R.height 	= math.abs(destLevel - R.currentLevel)
 	elseif R.choice == 16 then -- create mining corridor system default: square 17 x 17 
 		local choices = {"At corridor start, on the floor",
 						 "At corridor start, on the ceiling",
@@ -14848,7 +14836,7 @@ local function getTaskInventoryTo30(R)
 		if blockType:find("ladder") == nil then
 			T:turnLeft(2)
 			blockType = T:getBlockType("forward")
-			if blockType:find("ladder") == nil then
+			if blockType:find("ladder") ~= nil then
 				needSigns = false
 			end
 			T:turnRight(1)
@@ -14869,14 +14857,17 @@ local function getTaskInventoryTo30(R)
 			T:checkInventoryForItem({"minecraft:water_bucket"}, {2})
 		end
 		T:checkInventoryForItem({"minecraft:soul_sand", "minecraft:dirt"}, {1, 1}, true, "? use dirt as soul sand placeholder")
-		T:checkInventoryForItem({"stone"}, {R.height * 2}, false) -- estimate only partial cloaking needed
+		T:checkInventoryForItem({"stone"}, {R.height * 4 + 10}, false) -- estimate only partial cloaking needed
 		local _, slots = T:getFirstEmptySlot() -- returns first empty slot, no of empty slots
-		T:checkInventoryForItem({"minecraft:bucket"}, {slots}, false, "Add empty buckets for speed!")
+		T:checkInventoryForItem({"minecraft:bucket"}, {slots}, false, "More buckets = faster build!")
 		menu.colourPrint("Creating bubble lift ".. R.height.. " blocks high", colors.lime)
-		if not needSigns then -- ladder present as signs not required
+		
+		if needSigns then -- ladder present as signs not required
+			menu.colourPrint("\nSTAND CLEAR!", colors.red)
+		else
 			menu.colourPrint("Wait at the top via ladder...", colors.orange)
+			menu.colourPrint("\nSTAND ON THE LADDER FOR SAFETY!", colors.red)
 		end
-		menu.colourPrint("\nSTAND ON THE LADDER FOR SAFETY!", colors.red)
 		menu.colourPrint("\nEnter to continue", colors.yellow)
 		read()
 		retValue = createBubbleLift(R)
@@ -15771,6 +15762,7 @@ local function main()
 		local R =
 		{
 			choice = 0,
+			currentLevel = 0,
 			subChoice = 0,
 			size = 0,
 			width = 0,
