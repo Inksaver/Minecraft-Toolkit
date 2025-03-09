@@ -12169,7 +12169,8 @@ local function getTaskItemsList()
 	text[12] = {"2 stairs for each level", "6 * levels stone", "1 chest"} 								-- stairs up/down
 	text[13] = {"24 torch (optional)", "1 bucket (optional)", "64 stone", "1 chest"} 					-- mine at this level
 	text[14] = {"levels * 4 stone","water_bucket"} 														-- safe drop to water block
-	text[15] = {"1 soul sand", "3 water bucket", "levels * 4 stone", "1-9 buckets (optional)"} 			-- single column bubble lift
+	text[15] = {"1 soul sand", "3 water bucket", "levels * 4 stone", "1-9 buckets (optional)",
+	            "2 signs if no ladder present"} 														-- single column bubble lift
 	text[16] = {"1 bucket (optional)", "64 stone"} 														-- quick corridor
 	text[17] = {"1 bucket (optional)", "64 stone"}														-- quick mine
 	text[18] = {"1 bucket (optional)"}																	-- mine to bedrock
