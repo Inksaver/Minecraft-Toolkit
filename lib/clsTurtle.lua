@@ -1,4 +1,4 @@
-version = 20241102.0800
+version = 20250410.2240
 --[[
 	https://pastebin.com/tvfj90gK
 	Last edited: see version YYYYMMDD.HHMM
@@ -1250,8 +1250,8 @@ end
 
 function T:drop(direction, slot, amount)
 	direction = direction or "forward"
-	if type(slot) == "number" then
-		slot = slot or 1
+	if slot == nil then
+		slot = 1
 	elseif type(slot) == "string" then
 		slot = self:getItemSlot(slot)
 	end
@@ -1301,12 +1301,10 @@ function T:dropItem(item, direction, keepAmount, except)
 		drop all MysticalAgriculture essences except those listed
 	]]
 	direction = direction or "forward"
-	except = except or {}
 	local itemSlot = 0
-	local stockData = {}
 	local success = false
-	
-	if #except > 0 then -- drop everything except specified
+	self:saveToLog("T:dropItem("..item..","..direction..","..tostring(keepAmount)..")")
+	if except ~= nil then -- drop everything except specified
 		for slot = 1, 16 do
 			local itemInSlot = self:getSlotContains(slot)	-- eg mysticalagriculture:inferium_essence
 			if itemInSlot ~= "" then
@@ -1333,19 +1331,22 @@ function T:dropItem(item, direction, keepAmount, except)
 			itemSlot = self:getItemSlot(item)
 		end
 	else -- keep a specific amount
-		-- {rt.total, rt.mostSlot, rt.leastSlot, rt.mostCount, rt.leastCount}
-		stockData = self:getStock(item)
-		while stockData.total > keepAmount do
-			if stockData.total - stockData.leastCount > keepAmount then
+		local _, total, stockData  = T:getItemSlot(item)	-- integer, integer, table
+		self:saveToLog("\ttotal = "..total..", keepAmount = "..keepAmount)
+		while total > keepAmount do
+			if total - stockData.leastCount > keepAmount then
 				success = self:drop(direction, stockData.leastSlot)
 			else
-				success = self:drop(direction, stockData.leastSlot, stockData.total - keepAmount)
+				success = self:drop(direction, stockData.leastSlot, total - keepAmount)
 			end
+			self:saveToLog("\tsuccess = "..tostring(success))
 			if not success then
 				break
 			end
-			stockData = self:getStock(item)
+			_, total, stockData  = T:getItemSlot(item)	-- integer, integer, table
+			self:saveToLog("\ttotal = "..total)
 		end
+		self:saveToLog("T:dropItem completed")
 	end
 	turtle.select(1)
 	return success
@@ -1447,6 +1448,7 @@ function T:emptyInventorySelection(direction, exceptions, quantities)
 end
 
 function T:emptyTrash(direction)
+	self:saveToLog("T:emptyTrash")
 	direction = direction or "down"
 	local Drop = turtle.dropDown
 	if direction == "up" then
@@ -1461,14 +1463,11 @@ function T:emptyTrash(direction)
 	local keepItems = 	{"netherrack", "cobble", "chest", "torch", "ore", "bucket", "coal", "diamond", "debris", "deepslate","iron","gold","copper"}			
 	local keepit = false					
 	-- empty excess cobble, dirt, all gravel, unknown minerals
-	-- keep max of 1 stack
-	self:sortInventory(false) -- do not use chest for sorting as may leave items behind
 	for i = 1, 16 do
 		keepit = false
 		if turtle.getItemCount(i) > 0 then
 			itemName = self:getItemName(i) -- eg 'minecraft:andesite'
 			for _,v in pairs(keepItems) do
-				--if v == item then
 				if itemName:find(v) ~= nil then
 					keepit = true
 					break
@@ -1481,10 +1480,9 @@ function T:emptyTrash(direction)
 			end
 		end
 	end
-	self:sortInventory(false)
-	self:emptyTrashItem(direction, "minecraft:cobblestone", 192)
-	self:emptyTrashItem(direction, "minecraft:netherrack", 192)
-	self:emptyTrashItem(direction, "minecraft:cobbled_deepslate", 192)
+	self:dropItem("minecraft:cobblestone", direction, 192)
+	self:dropItem("minecraft:netherrack", direction, 192)
+	self:dropItem("minecraft:cobbled_deepslate", direction, 192)
 	slotData = self:getStock("minecraft:coal", 0)
 	if slotData.total > 64 then
 		if slotData.mostSlot ~= slotData.leastSlot and slotData.leastSlot ~= 0 then
@@ -1492,6 +1490,9 @@ function T:emptyTrash(direction)
 			turtle.refuel()
 		end
 	end
+	self:saveToLog("T:emptyTrash sortInventory...")
+	self:sortInventory(false)
+	self:saveToLog("T:emptyTrash sortInventory completed")
 	turtle.select(1)
 end
 
@@ -2201,6 +2202,28 @@ function T:updateInventory()
 	return nil
 end
 
+function T:getInventoryData()
+	--[[ table eg: {"minecraft:cobblestone" = {1 = 64, 2 = 64, 5 = 10}, "minecraft:cobbled_deepslate" = {3 = 60, 4 = 17}}  ]]
+	local inventory = {}
+	for slot = 1, 16 do
+		local slotContains, slotCount = self:getSlotContains(slot)
+		if slotContains ~= "" then -- eg "minecraft:cobblestone"
+			if inventory[slotContains] ~= nil then --already exists in inventory
+				table.insert(inventory[slotContains], {slot = slotCount}) -- add new table for this lot and count
+			else
+				inventory[slotContains] = {slot = slotCount}
+			end
+		end
+	end
+	return inventory
+	--[[
+	{
+		"minecraft:cobblestone" = {1 = 64, 2 = 64, 5 = 10},
+		"minecraft:cobbled_deepslate" = {3 = 60, 4 = 17}
+	}
+	]]
+end
+
 function T:getInventoryItems()
 	--[[ table eg: {"minecraft:cobblestone" = 256, "minecraft:cobbled_deepslate = 256"}  ]]
 	local inventory = {}
@@ -2274,8 +2297,8 @@ function T:getItemSlot(item)
 	
 	local total = 0
 	-- make a table of all existing blocks
-	local stock = self:getCurrentInventory()		-- returns full names of all inventory items in a list 1-16
-	--self:saveToLog("currentInventory = "..textutils.serialise(stock))
+	local stock = self:getCurrentInventory()	-- returns full names of all inventory items in a list 1-16
+	
 	if item:find("\:") ~= nil then 					-- find exact match only
 		for i,v in ipairs(stock) do					-- iterate current inventory
 			if v == item then						-- item found
@@ -2598,16 +2621,7 @@ function T:getStock(item)
 	rt.leastSlot = slotData.leastSlot
 	rt.mostCount = slotData.mostCount
 	rt.leastCount = slotData.leastCount
-	--[[
-	if slot == 0 then
-		if modifier == nil then
-			T.saveToLog(self, "getStock()"..tostring(item).."= not found", true)
-		else
-			T.saveToLog(self, "getStock()"..tostring(item).."("..tostring(modifier)..")= not found")
-		end
-	end
-	]]
-	
+
 	return rt --{rt.total, rt.mostSlot, rt.leastSlot, rt.mostCount, rt.leastCount}
 end
 
@@ -3865,9 +3879,9 @@ function T:setEquipment()
 end
 	
 function T:sortInventory(useChest)
-	useChest = useChest or true
+	if useChest == nil then useChest = true end
 	local lib = {}
-	
+
 	function lib.checkForStorage(self)
 		local blockType = self:getBlockType("forward")
 		if blockType:find("barrel") ~= nil or blockType:find("chest") ~= nil then
