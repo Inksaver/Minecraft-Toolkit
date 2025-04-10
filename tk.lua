@@ -1,4 +1,4 @@
-version = 20250308.2030
+version = 20250410.0800
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
@@ -12170,7 +12170,7 @@ local function getTaskItemsList()
 	text[13] = {"24 torch (optional)", "1 bucket (optional)", "64 stone", "1 chest"} 					-- mine at this level
 	text[14] = {"levels * 4 stone","water_bucket"} 														-- safe drop to water block
 	text[15] = {"1 soul sand", "3 water bucket", "levels * 4 stone", "1-9 buckets (optional)",
-	            "2 signs if no ladder present"} 														-- single column bubble lift
+				"2 signs if no ladder present"} 														-- single column bubble lift
 	text[16] = {"1 bucket (optional)", "64 stone"} 														-- quick corridor
 	text[17] = {"1 bucket (optional)", "64 stone"}														-- quick mine
 	text[18] = {"1 bucket (optional)"}																	-- mine to bedrock
@@ -15691,20 +15691,12 @@ local function getTaskInventory(R)
 end
 
 local function test(R)
-	local lib = {}
-	
-	function lib.dig(direction, bypass, slot)
-		direction = direction or "forward"
-		slot = slot or 1
-		bypass = bypass or true
-		
-		print("direction: "..direction)
-		print("bypass: "..tostring(bypass))
-		print("slot: "..slot)
-		
-	end
-	lib.dig("down")
-	read()
+	-- allows testing any new functions.
+	-- use tk test
+	T:saveToLog("test() started")
+	menu.clear()
+	T:emptyTrash("up")
+	return {"function 'test' executed successfully"}
 end
 
 local function main()
@@ -15788,7 +15780,8 @@ local function main()
 			inventory = {}
 		}
 		menu = require("lib.menu")
-		T = require("lib.clsTurtle").new(false) -- true enables logfile to log.txt note dot NOT colon
+		--T = require("lib.clsTurtle").new(false) -- true enables logfile to log.txt note dot NOT colon
+		T = require("lib.clsTurtle").new(true) -- true enables logfile to log.txt note dot NOT colon
 		T:clear()
 		doContinue = false	-- reset
 		if args[1] ~= nil then
