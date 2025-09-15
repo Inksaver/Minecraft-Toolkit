@@ -1,6 +1,4 @@
-version = 20240828.1400
--- https://pastebin.com/KXCakmNn
--- pastebin get KXCakmNn f.lua
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM 
 local usage = {}
 usage.backwards = [[
