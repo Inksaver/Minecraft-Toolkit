@@ -1,6 +1,4 @@
-version = 20220422.1005
--- https://pastebin.com/DH6smTHb
--- pastebin get DH6smTHb r.lua
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
 local usage = [[r = 1 turn to right
 r # : moves # turns to right]]
