@@ -1,11 +1,12 @@
-version = 20230308.1930
+version = 20250915.1500
 --[[
-	pastebin get kFZsXu99 lavaRefuel.lua
 	Last edited: see version YYYYMMDD.HHMM
 	Will auto-download clsTurtle.lua
 	Used to refuel a turtle on a lava lake or drain lava
 	Use: 'lavaRefuel' in turtle terminal
 ]]
+local Turtle
+-- Turtle class (T), menu class (menu) and other libraries made Global
 
 function clear()
 	term.clear()
@@ -28,37 +29,91 @@ function checkLibs(libDir, filename)
 	return fileExists
 end
 
-function getLavaStrip()
-	local block, blockType = T:isWaterOrLava("down") -- will automatically fill bucket with lava and refuel
-	local start = true
+function getFileFromGithub(url, pathAndFile)
+	print("Missing "..pathAndFile)
+	print("Attempting to obtain from Github...")
+
+	local response, message = http.get(url..pathAndFile)
+	if response == nil then
+		print("failed to install "..pathAndFile.." from Github: "..message)
+		return
+	else
+		local data = response.readAll()
+		response.close()
+		local h = fs.open(pathAndFile, "w")
+		if h == nil then
+			error("Could not open "..pathAndFile.." for saving")
+		end
+		-- Save new file
+		h.write(data)
+		h.close()
+		print(pathAndFile.." installed from Github")
+	end
+end
+
+function getLavaStrip(y)
+	local block = T:isWaterOrLava("down") -- will automatically fill bucket with lava and refuel
 	local length = 0
 	local lavaPresent = false
+	local full = false
 	-- while lava below, just started or moved forward < 3
-	while block == "minecraft:lava" or block == "minecraft:flowing_lava" or start or length < 3 do --will automatically fill bucket with lava
-		start = false
-		
+	while (block == "minecraft:lava" or block == "minecraft:flowing_lava" or length < 3) and not full do --will automatically fill bucket with lava
 		if T:forward(1) then
 			length = length + 1
+			y = y + 1
 		end
-		block, blockType = T:isWaterOrLava("down")
+		block = T:isWaterOrLava("down")
 		
 		print("Block below: "..tostring(block))
 		if block == "minecraft:lava" or block == "minecraft:flowing_lava" then
 			lavaPresent = true
 		end
+		if turtle.getFuelLevel() >= turtle.getFuelLimit() then
+			full = true
+			lavaPresent = false
+		end
 	end
 	T:go("L2F"..length + 1)
-	block, blockType = T:isWaterOrLava("down")
+	y = y - length - 1
+	block = T:isWaterOrLava("down")
 	while block == "minecraft:lava" or block == "minecraft:flowing_lava" do
 		T:forward(1)
-		block, blockType = T:isWaterOrLava("down")
+		y = y - 1
+		block = T:isWaterOrLava("down")
 	end
 	turtle.back()
+	y = y + 1
 	T:go("L2")
-	return lavaPresent
+	return lavaPresent, y
+end
+	
+function goHome(x, y)
+	if y > 0 then
+		utils.goBack(y)
+	elseif y < 0 then
+		T:forward(math.abs(y))
+	end
+	if x > 0 then
+		T:go("L1F"..x.."R1")
+	elseif x < 0 then
+		T:go("R1F"..math.abs(x).."L1")
+	end
 end
 
 function main()
+	local url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
+	if not checkLibs("lib", "clsTurtle") then
+		-- use Github get to download clsTurtle to libs folder
+		getFileFromGithub(url, "lib/clsTurtle.lua")
+	end
+	if not checkLibs("lib", "Class.lua") then
+		-- use Github get to download Class to libs folder
+		getFileFromGithub(url, "lib/Class.lua")
+	end
+	
+	Turtle = require("lib.clsTurtle")
+	T = Turtle(false)
+	
 	local side = ''
 	while side == '' do
 		clear()
@@ -74,58 +129,39 @@ function main()
 			side = 'C'
 		end
 	end
-	local doContinue = true
-	if not checkLibs("lib", "clsTurtle") then
-		-- use pastebin get to download clsTurtle to libs folder
-		print("Missing clsTurtle.lua in libs directory")
-		print("Attempting to obtain from Pastebin...")
-		if shell.run("pastebin","get","tvfj90gK","lib/clsTurtle.lua") then
-			print("clsTurtle.lua installed from Pastebin")
-		else
-			print("failed to install clsTurtle.lua from Pastebin")
-			doContinue = false
-		end
-	end
-	sleep(2)
-	if doContinue then
-		clear()
-		print("Current fuel: "..turtle.getFuelLevel().." / "..turtle.getFuelLimit())
-		T = require("lib.clsTurtle"):new()
-		local lavaSlot = T:getItemSlot("minecraft:lava_bucket", -1) 
-		if lavaSlot > 0 then
-			turtle.select(lavaSlot)
-			T:refuel(0) -- 0=force refuel
-		end
-		T:checkInventoryForItem({"minecraft:bucket", "minecraft:lava_bucket"}, {1,1}, true)
+		
+	clear()
+	print("Current fuel: "..turtle.getFuelLevel().." / "..turtle.getFuelLimit())
+	
+	local lavaSlot = T:getItemSlot("minecraft:lava_bucket") 
+	if lavaSlot > 0 then
+		turtle.select(lavaSlot)
 		T:refuel(0) -- 0=force refuel
-		local width = 0
-		local lavaPresent = getLavaStrip()
-		if side ~= 'C' then -- not a single strip
-			while lavaPresent do
-				width = width + 1
-				if side == 'R' then -- do strip on the right
-					T:go("R1F1L1")
-				else
-					T:go("L1F1R1")
-				end
-				lavaPresent = getLavaStrip()
-				if turtle.getFuelLevel() >= turtle.getFuelLimit() then
-					lavaPresent = false
-					print("Max fuel "..turtle.getFuelLimit() .. " achieved")
-				end
-			end
-			if width <= 0 then
-				width = 1
-			end
-			
-			if side == 'R' then
-				T:go("L1F"..width.."R1")
+	end
+	T:checkInventoryForItem({"minecraft:bucket", "minecraft:lava_bucket"}, {1,1}, true)
+	T:refuel(0) -- 0=force refuel
+	local x, y, width = 0, 0, 0
+	local lavaPresent, y = getLavaStrip(y)
+	if side ~= 'C' then -- not a single strip
+		while lavaPresent do
+			width = width + 1
+			if side == 'R' then -- do strip on the right
+				T:go("R1F1L1")
+				x = x + 1
 			else
-				T:go("R1F"..width.."L1")
+				T:go("L1F1R1")
+				x = x - 1
+			end
+			lavaPresent, y  = getLavaStrip(y)
+			if turtle.getFuelLevel() >= turtle.getFuelLimit() then
+				lavaPresent = false
+				print("Max fuel "..turtle.getFuelLimit() .. " achieved")
 			end
 		end
-	else
-		print("Add missing files and restart")
+		if width <= 0 then
+			width = 1
+		end
+		goHome(x, y)
 	end
 end
 
