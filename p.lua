@@ -1,5 +1,4 @@
-version = 20230430.1200
--- pastebin get D25pg0QQ p.lua
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
 local usage = [[usage:
 p   (place forward) or p 1
