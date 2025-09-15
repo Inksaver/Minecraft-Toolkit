@@ -1,6 +1,4 @@
-version = 20220422.1005
--- https://pastebin.com/yWDKZpvj
--- pastebin get yWDKZpvj l.lua
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
 local usage = [[l = 1 turn to left
 l # : moves # turns to left]]
