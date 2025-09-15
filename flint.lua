@@ -1,7 +1,5 @@
-version = 20201031.1433
---[[
-	https://pastebin.com/dBJ0frzj
-]]
+version = 20250915.1500
+-- Last edited: see version YYYYMMDD.HHMM
 function clear()
 	term.clear()
 	term.setCursorPos(1, 1)
