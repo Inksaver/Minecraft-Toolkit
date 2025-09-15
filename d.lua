@@ -1,162 +1,36 @@
-version = 20230801.1200
--- pastebin get i2MRYcsZ d.lua
--- https://pastebin.com/i2MRYcsZ
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
-local usage = {}
-usage.backwards = [[
-b 10  :moves 10 blocks back unless
-obstructed. No blocks broken
-
-b 10 d :moves 10 blocks back unless
-bedrock. Blocks are removed.
-
-'d' or any character / string is ok]]
-usage.down = [[
-d 10  :moves 10 blocks down unless
-obstructed. No blocks broken
-
-d 10 d :moves 10 blocks down unless
-bedrock. Blocks are removed.
-
-'d' or any character / string is ok]]
-usage.forwards = [[
-f 10  :moves 10 blocks forward unless
-obstructed. No blocks broken
-
-f 10 d :moves 10 blocks forward unless
-bedrock. Blocks are removed.
-
-'d' or any character / string is ok]]
-usage.up = [[
-u 10  :moves 10 blocks up unless
-obstructed. No blocks broken
-
-u 10 d :moves 10 blocks up unless
-bedrock. Blocks are removed.
-
-'d' or any character / string is ok]]
+local usage = [[x u or x 0 digUp()
+x or x f or x 1 dig()
+x d or x 2 digDown()]]
 args = {...}
 
-function checkArgs(direction)
-	local numBlocksRequested = 1
-	local doDig = false
+function main()
+	local success = false
+	local errorMessage = ""
 	if args[1] ~= nil then
 		if args[1]:lower() == "h" then
 			term.clear()
 			term.setCursorPos(1,1)
-			print(usage[direction])
+			print(usage)
 			print("Fuel Level: "..turtle.getFuelLevel())
 			error()
 		else
-			numBlocksRequested = tonumber(args[1])
-			if numBlocksRequested == nil then
-				print("Use a number as argument, not "..args[1])
-				error()
+			if args[1]:lower() == "u" or args[1] == "0" then
+				success, errorMessage = turtle.digUp()
+			elseif args[1]:lower() == "f" or args[1] == "1" then
+				success, errorMessage = turtle.dig()
+			elseif args[1]:lower() == "d" or args[1] == "2" then
+				success, errorMessage = turtle.digDown()
 			end
 		end
-		if args[2] ~= nil then -- any character here will work
-			doDig = true
-		end
+	else -- assume forward
+		success, errorMessage = turtle.dig()
 	end
-	return numBlocksRequested, doDig
-end
-
-function turnRound()
-	turtle.turnRight()
-	turtle.turnRight()
-end
-
-function doMoves(numBlocksRequested, doDig, direction)
-	local errorMsg = nil
-	local numBlocksMoved = 0
-	local Move, Dig, Detect
-	local turned = false
-	
-	-- re-assign turtle functions to new variables
-	if direction == "forwards" then
-		Move = turtle.forward
-		Dig = turtle.dig
-		Detect = turtle.detect
-	elseif direction == "backwards" then
-		Move = turtle.back
-		Dig = turtle.dig
-		Detect = turtle.detect
-	elseif direction == "up" then
-		Move = turtle.up
-		Dig = turtle.digUp
-		Detect = turtle.detectUp
+	if success then
+		print("Block excavated")
 	else
-		Move = turtle.down
-		Dig = turtle.digDown
-		Detect = turtle.detectDown
-	end
-	
-	for i = 1, numBlocksRequested, 1 do
-		local moveOK, moveError = Move() -- try to move forward/up/down
-		if doDig then
-			if moveOK then
-				numBlocksMoved = numBlocksMoved + 1
-			else -- did not move due to obstruction
-				-- while moveOK == false do -- same effect if you prefer.
-				if direction == "backwards" and not turned then
-					turnRound()
-					turned = true
-					Move = turtle.forward
-				end
-				while not moveOK do -- did not move if obstruction
-					local digOK, digError = Dig()
-					if digOK then
-						sleep(0.5) -- allow sand / gravel to drop if digging forward / up
-					else -- unable to dig, or nothing to dig
-						if digError == "Unbreakable block detected" then
-							errorMsg = digError
-							break
-						end
-					end
-					moveOK, moveError = Move() -- try to move forward/up/down again
-					if moveOK then
-						numBlocksMoved = numBlocksMoved + 1
-					end
-				end
-			end
-		else
-			if moveOK then
-				numBlocksMoved = numBlocksMoved + 1
-			else -- move did not succeed
-				errorMsg = moveError
-				break
-			end
-		end
-	end
-	
-	if turned then -- was "backwards" but obstuction rotated 180 so need to turn round again
-		turnRound()
-	end
-	
-	return numBlocksMoved, errorMsg
-end
-
-function printLog(direction, numBlocksRequested, numBlocksMoved, errorMsg)
-	print("Moved "..direction.." "..numBlocksMoved.. " / ".. numBlocksRequested)
-	if errorMsg ~= nil then
-		print (errorMsg)
-	end
-end
-
-function main()
-	local directions = {"backwards", "down", "forwards", "up"}
-	--***********************************************************************************************
-	--Change this to 1-4 to suit application (forwards, up, down, backwards) f.lua, u.lua, d.lua, b.lua
-	local directionIndex = 2 -- this is for d.lua
-	--***********************************************************************************************
-	local direction = directions[directionIndex] -- e.g backwards
-	local numBlocksRequested, doDig = checkArgs(direction)
-	if turtle.getFuelLevel() == 0 then
-		print("No fuel")
-	else
-		print("Fuel level: "..turtle.getFuelLevel())
-		local numBlocksMoved, errorMsg = doMoves(numBlocksRequested, doDig, direction)
-		printLog(direction, numBlocksRequested, numBlocksMoved, errorMsg)
+		print(errorMessage)
 	end
 end
 
