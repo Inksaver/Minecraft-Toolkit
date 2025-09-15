@@ -1,7 +1,5 @@
-version = 20201125.1115
+version = 20250915.1500
 --[[
-	-- pastebin get xQqK3VcK go.lua
-	last updated 05/09/2020
 	Will auto-download clsTurtle.lua
 	Used to move turtle in multiple directions
 	Use: go in command prompt
@@ -19,7 +17,7 @@ version = 20201125.1115
 ]]
 
 args = {...} -- eg go r1f5u2
-
+local Turtle
 local kv = {}
 kv[keys.zero] 	= "0"
 kv[keys.one] 	= "1"
@@ -133,54 +131,70 @@ function getCommand()
 	return cmd
 end
 
-function main()
-	clear(false)
-	local doContinue = true
-	if not checkLibs("lib", "clsTurtle") then
-		-- use pastebin get to download clsTurtle to libs folder
-		print("Missing clsTurtle.lua in libs directory")
-		print("Attempting to obtain from Pastebin...")
-		if shell.run("pastebin","get","tvfj90gK","lib/clsTurtle.lua") then
-			print("clsTurtle.lua installed from Pastebin")
-			sleep(2)
-		else
-			print("failed to install clsTurtle.lua from Pastebin")
-			doContinue = false
+function getFileFromGithub(url, pathAndFile)
+	print("Missing "..pathAndFile)
+	print("Attempting to obtain from Github...")
+
+	local response, message = http.get(url..pathAndFile)
+	if response == nil then
+		print("failed to install "..pathAndFile.." from Github: "..message)
+		return
+	else
+		local data = response.readAll()
+		response.close()
+		local h = fs.open(pathAndFile, "w")
+		if h == nil then
+			error("Could not open "..pathAndFile.." for saving")
 		end
+		-- Save new file
+		h.write(data)
+		h.close()
+		print(pathAndFile.." installed from Github")
 	end
-	if doContinue then
-		print("Current fuel: "..turtle.getFuelLevel().." / "..turtle.getFuelLimit())
-		T = require("lib.clsTurtle"):new()
-		local action,  modifier
-		local cmd = checkArgs() -- empty string or cmd eg go r1f5u2
-		local direction = {"up", "forward", "down"}
-		if cmd ~= "" then
-			T:go(cmd)
-		else
-			sleep(2)
-			clear(true)
-			while true do
-				cmd = string.upper(getCommand())
-				action = string.sub(cmd, 1, 1)
-				modifier = string.sub(cmd, 2)
-				if cmd == "" then
-					break
+end
+
+function main()
+	local url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
+	if not checkLibs("lib", "clsTurtle") then
+		-- use Github get to download clsTurtle to libs folder
+		getFileFromGithub(url, "lib/clsTurtle.lua")
+	end
+	if not checkLibs("lib", "Class.lua") then
+		-- use Github get to download Class to libs folder
+		getFileFromGithub(url, "lib/Class.lua")
+	end
+	Turtle = require("lib.clsTurtle")
+	T = Turtle(false)
+	print("Current fuel: "..turtle.getFuelLevel().." / "..turtle.getFuelLimit())
+	local action,  modifier
+	local cmd = checkArgs() -- empty string or cmd eg go r1f5u2
+	local direction = {"up", "forward", "down"}
+	if cmd ~= "" then
+		T:go(cmd)
+	else
+		sleep(2)
+		clear(true)
+		while true do
+			cmd = string.upper(getCommand())
+			action = string.sub(cmd, 1, 1)
+			modifier = string.sub(cmd, 2)
+			if cmd == "" then
+				break
+			else
+				if action == "S" then --select slot
+					turtle.select(tonumber(modifier))
+				elseif action == "X" then --dig
+					T:dig(direction[modifier + 1])
+				elseif action == "P" then --place
+					--place current selected slot contents
+					--T:place(blockType, damageNo, direction, leaveExisting)
+					local slotContains, slotCount, slotDamage = T:getSlotContains(turtle.getSelectedSlot)
+					
+					print("Place "..slotContains.." count: "..slotCount.." damage: "..tostring(slotDamage).." Enter")
+					read()
+					T:place(slotContains, slotDamage, direction[modifier + 1], false)
 				else
-					if action == "S" then --select slot
-						turtle.select(tonumber(modifier))
-					elseif action == "X" then --dig
-						T:dig(direction[modifier + 1])
-					elseif action == "P" then --place
-						--place current selected slot contents
-						--T:place(blockType, damageNo, direction, leaveExisting)
-						local slotContains, slotCount, slotDamage = T:getSlotContains(turtle.getSelectedSlot)
-						
-						print("Place "..slotContains.." count: "..slotCount.." damage: "..tostring(slotDamage).." Enter")
-						read()
-						T:place(slotContains, slotDamage, direction[modifier + 1], false)
-					else
-						T:go(cmd)
-					end
+					T:go(cmd)
 				end
 			end
 		end
