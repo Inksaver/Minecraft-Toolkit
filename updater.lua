@@ -1,32 +1,30 @@
-version = 20230824.1330
+version = 20250915.2000
 --[[
-	https://pastebin.com/8qbeZevX
 	Last edited: see version YYYYMMDD.HHMM
-	use ' pastebin run 8qbeZevX ' in turtle terminal
-	This will load useful tools and utilities
+	This will add all GUI toolkit (tk3) files and libraries
+	Also a range of useful utilities
+	If files exist it will compare the version and only update if newer
 ]]
 
-local libDir = "lib"	-- set library directory name
 local tmpDir = "tmp"	-- set temp folder name to 'tmp'
-local root = "."
-local files = {}		-- table of main files
-local libFiles = {}		-- table of lib files (clsTurtle.lua and menu.lua)
-local fileSizes = {}		-- table of current file sizes
-local libFileSizes = {}	-- table of current library file sizes
+local files = {}		-- table of files
+local fileSizes = {}	-- table of current file sizes
 
-local function clear()
+function clear()
 	term.clear()
 	term.setCursorPos(1, 1)
 end
 
-local function log(text)
+function log(text)
+	-- Save comments to log file and print to screen
 	print(text)
 	local h = fs.open("update.log", "a")
 	h.writeLine(text)
 	h.close()
 end
 
-local function checkLabel()
+function checkLabel()
+	-- check if computer has been labelled, ask user for a name if not
 	if os.getComputerLabel() == nil then
 		local noname = true
 		while noname do
@@ -50,21 +48,7 @@ local function checkLabel()
 	end
 end
 
-local function checkFileExists(fileName, isLib)
-	--[[ check in ./ or ./lib/ only (existing files) ]]
-	if isLib then	-- checking a library file
-		if fs.exists(fs.combine(libDir, fileName)) or fs.exists(fs.combine(libDir, fileName..".lua")) then
-			return true
-		end
-	else
-		if fs.exists(fileName) or fs.exists(fileName..".lua") then
-			return true
-		end
-	end
-	return false
-end
-
-local function createTempDir()
+function createTempDir()
 	if fs.exists(tmpDir) then
 		log("./"..tmpDir.." already exists")
 	else
@@ -73,40 +57,46 @@ local function createTempDir()
 	end
 end
 
-local function getFile(pastebin, fileName)
-	--[[eg "UFvjc1bw", "tmp", "tk"
-		use pastebin get to download file to tmp]]
-	log("Fetching "..pastebin.." from Pastebin...")
-	status, retval = pcall(shell.run, "pastebin", "get", pastebin, fs.combine(tmpDir, fileName))
-	--if shell.run("pastebin", "get", pastebin, fs.combine(tmpDir, fileName)) then
-	if status then
-		log("Fetch error message "..tostring(retVal))
-		log("Fetch success: "..tostring(status))
-		log(fileName.." copied to ./"..tmpDir)
-		return true
-	else
-		log(retval)
-		log("failed to copy "..fileName.." from Pastebin")
-		return false
+function checkFile(url, fileName, tmpDir)
+	if not fs.exists(fileName) then
+		log("Missing fileName "..fileName..", trying Github")
 	end
+	local fileURL = url..fileName
+	-- eg "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/lib/ui/Multibutton.lua"
+	local response, message = http.get(fileURL)
+	if response == nil then
+		log("failed to get "..fileName.." from Github")
+	else
+		local data = response.readAll()
+		response.close()
+		local tempFile = getTempFileName(fileName)
+		local h = fs.open(tempFile, "w")
+		if h ~= nil then
+			-- Save new fileName
+			h.write(data)
+			h.close()
+			log(fileName.." saved from Github to ".. tempFile)
+			return true
+		end
+	end
+	return false
 end
 
-local function moveFile(isLib, fileName) -- movgee tmp copy to /lib/
-	if isLib then
-		fs.delete(fs.combine(libDir, fileName))
-		sleep(1)
-		fs.move(fs.combine(tmpDir, fileName), fs.combine(libDir, fileName)) -- move to lib/
-		log("Moved: "..fileName.." from ./"..tmpDir.." to ./"..libDir.."/")
-	else
-		fs.delete(fileName)
-		sleep(1)
-		fs.move(fs.combine(tmpDir, fileName), fs.combine(root, fileName)) --move to root
-		log("Moved: "..fileName.." from ./"..tmpDir.." to ./")
-	end
+function getTempFileName(fileName)
+	local tempFile = fs.getName(fileName)		-- extract file name only from path
+	return fs.combine(tmpDir, tempFile)			-- create new file eg tmp/Class.lua from lib/Class.lua
 end
 
-local function getVersion(line, fileName)
-	--[[ version = 20201223.1104 ]]
+function moveFile(fileName, tmpDir) 			-- move tmp copy to correct position
+	fs.delete(fileName)
+	sleep(1)
+	local tempFile = getTempFileName(fileName)
+	fs.move(tempFile, fileName) 				--move to correct position
+	log("Moved: "..tempFile.." from "..tmpDir.." to ".. fileName)
+end
+
+function getVersion(line, fileName)
+	-- version = 20201223.1104
 	local version = 0
 	if line == nil then
 		log("Error reading "..fileName)
@@ -122,40 +112,34 @@ local function getVersion(line, fileName)
 	return version
 end
 
-local function isNewer(isLib, fileName)
-	--[[ open files in tmp and .. or ../tmp to read file version ]]
+function isNewer(fileName, tmpDir)
+	-- open files in tmp and original to read file version 
 	local old = nil										-- declare old file handle
 	local new = nil										-- declare new file handle
 	local move = true									-- set move flag to true
 	local oldOpen, newOpen = false, false
-	
-	if isLib then										-- file is in lib/
-		if checkFileExists(fileName, true) then
-			old = fs.open(fs.combine(libDir, fileName), "r")
-			move = false
-			oldOpen = true
-		end
-	else												-- not a library file
-		if checkFileExists(fileName, false) then
-			old = fs.open(fileName, "r")
-			move = false
-			oldOpen = true
-		end
+
+	if fs.exists(fileName) then	-- eg lib/Class.lua
+		old = fs.open(fileName, "r")
+		move = false
+		oldOpen = true
 	end
 	
-	if not move then 									-- previous version of file exists
-		if fs.exists(fs.combine(tmpDir, fileName)) then	-- should exist in tmp folder
-			new = fs.open(fs.combine(tmpDir, fileName), "r")
+	if not move then 											-- previous version of file exists
+		local tempFile = getTempFileName(fileName)
+		if fs.exists(tempFile) then								-- should exist in tmp folder
+			new = fs.open(tempFile, "r")
 			newOpen = true
-			local oldVer = getVersion(old.readLine(),fileName)
+			local oldVer = getVersion(old.readLine(), fileName)	-- pass line 1 eg version = 20250915.1800
 			log("Existing "..fileName.." version: "..oldVer)
+			
 			local newVer = getVersion(new.readLine(), fileName)
 			log("Downloaded "..fileName.." version: "..newVer)
-			if oldVer > 0 and newVer > 0 then
+			if oldVer > 0 and newVer > 0 then					-- both have version numbers
 				if newVer > oldVer then
 					move = true
 				end
-			elseif oldVer == 0 and newVer > 0 then
+			elseif oldVer == 0 and newVer > 0 then				-- new file has a number
 				move = true
 			end
 		end
@@ -170,47 +154,46 @@ local function isNewer(isLib, fileName)
 	return move
 end
 
-local function process(key, value, isLib)
-	local fileName = key..".lua"
+function process(url, fileName, tmpDir, fileSizes)
 	local count = 0
-	local fileSize = 0
+	
 	local freeSpace = fs.getFreeSpace("./")
 	log("\nAvailable space: "..freeSpace)
 	log("Checking: "..fileName)
-	if isLib then
-		fileSize = libFileSizes[key]
-	else
-		fileSize = fileSizes[key]
-	end
+
+	local fileSize = fileSizes[fileName]
+
 	log(fileName.." size:"..fileSize)
 	log("Available space after fetch: "..freeSpace - fileSize)
 	if freeSpace - fileSize < 50000 then
 		clear()
 		local message = 
 [[Insufficient disk space for update.
-1. Save your game
-2. Edit the file:
+1. Save and close your game
+2. delete any log files
+3. Edit the fileName:
 serverconfig/computercraft-server.toml
 (in your game save folder)
-3. Change line 2:
+4. Change line 2:
 computer_space_limit = 1000000 to
 computer_space_limit = 2000000 or more
-4. Re-start the game
-5. Run the updater again
+5. Re-start the game
+6. Run the updater again
 ]]
 		log(message)
 		return -1
 	else
-		if getFile(value, fileName) then		-- download file to /tmp
-			if isNewer(isLib, fileName) then
-				moveFile(isLib, fileName) 		-- move tmp copy to /lib
+		if checkFile(url, fileName, tmpDir) then			-- download fileName to /tmp
+			if isNewer(fileName, tmpDir) then
+				moveFile(fileName, tmpDir) 					-- move tmp copy to correct location
 				count = count  + 1
 			else
 				log(fileName.." is newer or unchanged")
 			end
 			sleep(1)
-			log("Removing "..tmpDir.."/"..fileName)
-			fs.delete(fs.combine(tmpDir, fileName))
+			local tempFile = getTempFileName(fileName)
+			log("Removing "..tempFile)
+			fs.delete(tempFile)
 			sleep(2)
 		end
 	end
@@ -218,21 +201,15 @@ computer_space_limit = 2000000 or more
 	return count
 end
 
-local function addFileSize(isLib, tblName, key)
-	local fileName = key..".lua"
-	if checkFileExists(fileName, isLib) then
-		if isLib then
-			tblName[key] = fs.getSize(fs.combine(libDir, fileName))
-			log("File size "..libDir.."/"..fileName..": "..tblName[key])
-		else
-			tblName[key] = fs.getSize(fileName)
-			log("File size "..fileName..": "..tblName[key])
-		end
+function addFileSize(fileSizes, fileName)
+	if fs.exists(fileName) then
+		fileSizes[fileName] = fs.getSize(fileName)
+		log("File size "..fileName..": "..fileSizes[fileName])
 	else
-		tblName[key] = 0
-		log("File size "..fileName.."\t: "..tblName[key].." (file not present)")
+		fileSizes[fileName] = 0
+		log("File size "..fileName.."\t: "..fileSizes[fileName].." (file not present)")
 	end
-	
+	return fileSizes
 end
 
 function main()
@@ -240,64 +217,77 @@ function main()
 	clear()
 	checkLabel() 									-- make sure turtle label is set
 	createTempDir() 								-- create /tmp/
-	local tk = "UFvjc1bw"
 	
-	libFiles['clsTurtle'] 	= "tvfj90gK"
-	libFiles['menu'] 		= "BhjbYsw4"
-							
-	--files["tk"] 		= "UFvjc1bw"
-	files['go'] 		= "xQqK3VcK"
-	files['lavaRefuel'] = "kFZsXu99"
-	files['d'] 			= "i2MRYcsZ"
-	files['u'] 			= "idtySGKX"
-	files['b'] 			= "g7DjxRbr"
-	files['f'] 			= "KXCakmNn"
-	files['r'] 			= "DH6smTHb"
-	files['l'] 			= "yWDKZpvj"
-	files['p'] 			= "D25pg0QQ"
-	files['x'] 			= 'Z9GBSM8e'
-	files['flint'] 		= "dBJ0frzj"
-	files['data'] 		= "fCKDc9Vi"
+	-- required for both turtle and advanced turtle
+	if not fs.exists("lib") then
+		fs.makeDir("lib")
+	end
+	if not fs.exists("lib/data") then
+		fs.makeDir("lib/data")
+	end
+	if not fs.exists("lib/ui") then
+		fs.makeDir("lib/ui")
+	end
+	if not fs.exists("scenes") then
+		fs.makeDir("scenes")
+	end
 	
+	local oldFileList =
+	{	
+		"b.lua", "d.lua", "f.lua", "flint.lua", "go.lua", "l.lua", "lavaRefuel.lua", "p.lua", "r.lua", "u.lua", "x.lua"
+	}
+	
+	local fileList = 
+	{
+		"tk3.lua",
+		"lib/Class.lua", "lib/clsTurtle.lua", "lib/EntityMgr.lua", "lib/Events.lua", "lib/help.lua",  "lib/Log.lua", 
+		"lib/menu.lua", "lib/Project.lua", "lib/Scene.lua", "lib/SceneMgr.lua", "lib/TurtleUtils.lua", "lib/Vector2.lua",
+		"lib/data/taskInventory.lua", "lib/data/items.lua",
+		"lib/ui/Button.lua", "lib/ui/Checkbox.lua", "lib/ui/ContentBar.lua", "lib/ui/Label.lua", 
+		"lib/ui/ListBox.lua", "lib/ui/Multibutton.lua", "lib/ui/Multilabel.lua", "lib/ui/ScrollBar.lua", "lib/ui/Textbox.lua",
+		"scenes/GetItems.lua", "scenes/Help.lua", "scenes/MainMenu.lua",
+		"scenes/Quit.lua", "scenes/TaskOptions.lua",
+	}
+			
 	local updated = 0
-	local libUpdated = 0
 	local h = fs.open("update.log", "w")
 	h.writeLine('Update Log:')
 	h.close()
 	
 	log("Checking file sizes:\n")
-
-	for key, _ in pairs(libFiles) do
-		addFileSize(true, libFileSizes, key)
+	for _, file in ipairs(oldFileList) do
+		fileSizes = addFileSize(fileSizes, file)
 	end	
-	addFileSize(false, fileSizes, "tk")
-	for key, _ in pairs(files) do
-		addFileSize(false, fileSizes, key)
+	for _, file in ipairs(fileList) do
+		fileSizes = addFileSize(fileSizes, file)
 	end	
+	
 	local freeSpace = fs.getFreeSpace("./")
-	log("Free space: "..freeSpace.."\n")
+	log("Free space before update: "..freeSpace.."\n")
 	clear()
-	local updated, libUpdated = 0, 0
-	updated = updated + process("tk", tk, false)			-- start with tk as may cause out of space error
-	if updated >= 0 then
-		for key,value in pairs(libFiles) do 					
-			libUpdated = libUpdated + process(key, value, true)		-- download lib files from pastebin to tmp/
-		end
-		for key,value in pairs(files) do
-			updated = updated + process(key, value, false)			-- download root files from pastebin to tmp/
-		end	
-		sleep(1)
-		log("Attempting deletion of ./"..tmpDir)
-		status, retval = pcall(fs.delete, tmpDir)
-		if status then
-			log("./"..tmpDir.." deleted")
-		else
-			log("Directory delete error message:\n "..tostring(retVal))
-		end
-		log("\nOperation Complete ")
-		log(libUpdated.." library files updated")
-		log(updated.." root files updated")
+	
+	local url = "https://raw.githubusercontent.com/Inksaver/Minecraft-Toolkit/main/"
+	for _, file in ipairs(oldFileList) do 					
+		updated = updated + process(url, file, tmpDir, fileSizes)		-- download files from Github to tmp/
 	end
+	
+	url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
+	for _, file in ipairs(fileList) do 					
+		updated = updated + process(url, file, tmpDir, fileSizes)		-- download files from Github to tmp/
+	end
+	
+	sleep(1)
+	log("Attempting deletion of ./"..tmpDir)
+	status, retval = pcall(fs.delete, tmpDir)
+	if status then
+		log("./"..tmpDir.." deleted")
+	else
+		log("Directory delete error message:\n "..tostring(retVal))
+	end
+	clear()
+	log("\nOperation Complete ")
+	log(updated.." files updated")
+
 	print("See update.log for details")
 end
 
