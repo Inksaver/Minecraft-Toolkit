@@ -1,6 +1,4 @@
-version = 20220429.1155
--- pastebin get Z9GBSM8e x.lua
--- https://pastebin.com/Z9GBSM8e
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
 local usage = [[x u or x 0 digUp()
 x or x f or x 1 dig()
