@@ -1,6 +1,4 @@
-version = 20230801.1200
--- pastebin get idtySGKX u.lua
--- https://pastebin.com/idtySGKX
+version = 20250915.1500
 -- Last edited: see version YYYYMMDD.HHMM
 local usage = {}
 usage.backwards = [[
