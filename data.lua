@@ -1,8 +1,5 @@
-version = 20240926.1230
---[[
-https://pastebin.com/fCKDc9Vi
-pastebin get fCKDc9Vi data.lua
-]]
+version = 20250916.0800
+
 local usage = [[usage:
 data    block name forward or data 1
 data u  block name up      or data 0
