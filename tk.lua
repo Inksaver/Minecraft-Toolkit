@@ -1,9 +1,8 @@
-version = 20250410.0800
+version = 20250916.0800
 
 local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
 	**********Toolkit v2**********
-	https://pastebin.com/UFvjc1bw
 	Last edited: see version YYYYMMDD.HHMM
 	if NOT online:
 		Make sure you create a folder 'lib' and place menu.lua and clsTurtle.lua into it
@@ -14,7 +13,7 @@ local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 
 args = {...} -- eg "farm", "tree"
 
-local menu, T
+--local menu, T
 --[[
 Computercraft started with mc version 1.7.10 and went to 1.8.9
 ccTweaked started around mc 1.12.2 and currently at 1.21.1
@@ -26,12 +25,98 @@ local dbug = false -- debug is reserved word
 local bedrock = 0
 local netherBedrock = 0
 local ceiling = 255
-local deletesWater = false
+local deletesWater = fals
 local brick = "minecraft:nether_brick" -- pre 1.16+ name
 local ccMajorVersion = _HOST:sub(15, _HOST:find("Minecraft") - 2) --eg ComputerCraft 1.93.0 (Minecraft 1.15.2)
 local ccMinorVersion = 0
 local barrelItems = nil	-- list of items and the barrels where they are usually found
 local chestItems = nil	-- list of items and the chests where they are usually found
+
+local function checkFileSystem()
+	local url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
+	
+	local lib = {}
+	
+	function lib.checkLabel()
+		-- check if computer has been labelled, ask user for a name if not
+		if os.getComputerLabel() == nil then
+			local noname = true
+			while noname do
+				clear()
+				log("Give this turtle a name (no spaces)_")
+				name = read()
+				if name == '' then
+					print("Just pressing Enter does not work")
+				elseif string.find(name, ' ') ~= nil then
+					print("NO SPACES!")
+				else
+					noname = false
+				end
+				if noname then
+					sleep(2)
+				end
+			end
+			
+			os.setComputerLabel(name)
+			log("Computer label set to "..os.getComputerLabel())
+		end
+	end
+
+	function lib.checkFiles(url, fileList, failedList)
+		for i = 1, #fileList do
+			if not fs.exists(fileList[i]) then
+				print("Missing file "..fileList[i]..", trying Github")
+				local fileURL = url..fileList[i]
+				-- eg "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/lib/ui/Multibutton.lua"
+				local response, message = http.get(fileURL)
+				if response == nil then
+					print("failed to install "..fileList[i].." from Github")
+					table.insert(failedList, fileList[i]..": "..message)
+				else
+					local data = response.readAll()
+					response.close()
+					local h = fs.open(fileList[i], "w")
+					if h == nil then
+						table.insert(failedList, fileList[i]..": Could not open file for saving")
+					end
+					-- Save new file
+					h.write(data)
+					h.close()
+					print(fileList[i].." installed from Github")
+				end
+			end
+		end
+		return failedList
+	end
+	
+	lib.checkLabel()
+	-- required for both turtle and advanced turtle
+	if not fs.exists("lib") then
+		fs.makeDir("lib")
+	end
+	
+	local fileList = {"lib/Class.lua", "lib/clsTurtle.lua", "lib/menu.lua"}
+	
+	local failedList = {}
+	failedList = lib.checkFiles(url, fileList, failedList)
+	
+	term.clear()
+	term.setCursorPos(1,1)
+	if next(failedList) ~= nil then
+		
+		print("Try to obtain these files manually")
+		for _,v in ipairs(failedList) do
+			print(v)
+		end
+		return
+	else
+		print("All files present. Starting in 2 seconds")
+	end
+	sleep(2)	
+end
+
+checkFileSystem()
+
 --[[
 Netherite level stand on 14
 Chunk borders F3+G or:
@@ -117,6 +202,11 @@ end
 
 local utils = {}
 local network = {}
+
+local Turtle = require("lib.clsTurtle")
+-- Turtle class (T), menu class (menu) and other libraries made Global
+_G.T = Turtle(false)
+_G.menu = require("lib.menu")
 
 function network.addToStorageList(storageType, itemKey, storageName, writeToFile)
 	-- itemKey is a table, so is passed byRef. No need to return a value
@@ -993,7 +1083,8 @@ function utils.assessTreeFarm(R)
 		return R
 	end
 	
-	local blockType = T:getBlockType("down")
+local blockType = T:getBlockType("down")
+	T:saveToLog("utils.assessTreeFarm(R): blockType (down) = "..blockType)
 	if blockType:find("modem") ~= nil then
 		R.networkFarm = true
 	else
@@ -15700,93 +15791,39 @@ local function test(R)
 end
 
 local function main()
-	local lib = {}
-	
-	function lib.checkLabel()
-		if os.getComputerLabel() == nil then
-			os.setComputerLabel("toolkit")
-			print("Computer label set to "..os.getComputerLabel())
-		end
-	end
-	
-	function lib.checkLibs(libDir, filename)
-		local fileExists = false
-		if fs.exists(libDir) then
-			if not fs.isDir(libDir) then
-				fs.move(libDir, libDir.."Renamed")
-				fs.makeDir(libDir)
-			end
-		else
-			fs.makeDir(libDir)
-		end
-		if fs.exists(fs.combine(libDir, filename)) or fs.exists(fs.combine(libDir, filename..".lua")) then
-			fileExists = true
-		end
-		return fileExists
-	end
-	
-	local doContinue = true
-	lib.checkLabel() -- make sure turtle label is set
-	--check if lib folder exists
-	if not lib.checkLibs("lib", "clsTurtle") then
-		-- use pastebin get to download clsTurtle to libs folder
-		print("Missing clsTurtle.lua in libs directory")
-		print("Attempting to obtain from Pastebin...")
-		if shell.run("pastebin","get","tvfj90gK","lib/clsTurtle.lua") then
-			print("clsTurtle.lua installed from Pastebin")
-		else
-			print("failed to install clsTurtle.lua from Pastebin")
-			doContinue = false
-		end
-	end
-	if not lib.checkLibs("lib", "menu") then
-		-- use pastebin get to download menu.lua to libs folder
-		print("Missing menu.lua in libs directory")
-		print("Attempting to obtain from Pastebin...")
-		if shell.run("pastebin","get","BhjbYsw4","lib/menu.lua") then
-			print("menu.lua installed from Pastebin")
-		else
-			print("failed to install menu.lua from Pastebin")
-			doContinue = false
-		end
-	end
-	if doContinue then
-		local result = {}
-		local R =
-		{
-			choice = 0,
-			currentLevel = 0,
-			subChoice = 0,
-			size = 0,
-			width = 0,
-			length = 0,
-			height = 0,
-			depth = 0,
-			up = false,
-			down = false,
-			silent = false,
-			data = {},
-			torchInterval = 0,
-			useBlockType = "",
-			auto = false,
-			side = "",
-			direction = "",
-			ready = false,
-			networkFarm = false,
-			mysticalAgriculture = false,
-			logType = "",
-			treeSize = "",
-			message = "",
-			inventory = {}
-		}
-		menu = require("lib.menu")
-		--T = require("lib.clsTurtle").new(false) -- true enables logfile to log.txt note dot NOT colon
-		T = require("lib.clsTurtle").new(true) -- true enables logfile to log.txt note dot NOT colon
-		T:clear()
-		doContinue = false	-- reset
-		if args[1] ~= nil then
-			if args[1]:sub(1,1) == "h" then
-				local help =
+	local result = {}
+	local R =
+	{
+		choice = 0,
+		currentLevel = 0,
+		subChoice = 0,
+		size = 0,
+		width = 0,
+		length = 0,
+		height = 0,
+		depth = 0,
+		up = false,
+		down = false,
+		silent = false,
+		data = {},
+		torchInterval = 0,
+		useBlockType = "",
+		auto = false,
+		side = "",
+		direction = "",
+		ready = false,
+		networkFarm = false,
+		mysticalAgriculture = false,
+		logType = "",
+		treeSize = "",
+		message = "",
+		inventory = {}
+	}
+	T:clear()
+	doContinue = false	-- reset
+	if args[1] ~= nil then
+		if args[1]:sub(1,1) == "h" then
+			local help =
 [[... = any following characters
 
 tk v...     = mc/ccTweaked versions
@@ -15799,106 +15836,103 @@ tk farm     = runs manageFarm(R)
 
 
 Enter to exit]]
-				menu.colourPrint(help, colours.yellow)
-				read()
-			elseif args[1] == "log" then
-				if args[2] ~= nil then
-					if args[2]:sub(1,1) == "d" then
-						dbug = true	-- set dbug flag
-						menu.colourPrint("Logging and debugging enabled", colors.lime)
-					end
-				else
-					menu.colourPrint("Logging enabled", colors.lime)
+			menu.colourPrint(help, colours.yellow)
+			read()
+		elseif args[1] == "log" then
+			if args[2] ~= nil then
+				if args[2]:sub(1,1) == "d" then
+					dbug = true	-- set dbug flag
+					menu.colourPrint("Logging and debugging enabled", colors.lime)
 				end
-				if T:getLogExists() then
-					if menu.getBoolean("Delete existing log file? (y/n)", 3, colors.orange) then
-						T:deleteLog()
-						menu.colourPrint("Log file deleted", colors.yellow)
-					end
+			else
+				menu.colourPrint("Logging enabled", colors.lime)
+			end
+			if T:getLogExists() then
+				if menu.getBoolean("Delete existing log file? (y/n)", 3, colors.orange) then
+					T:deleteLog()
+					menu.colourPrint("Log file deleted", colors.yellow)
 				end
-				T:setUseLog(true)
-				doContinue = true
-				utils.waitForInput()
-				--if dbug then
-					--menu.colourPrint("Enter to continue...", colors.lightBlue)
-					--read()
-				--end
-			elseif args[1] == "farm" then
-				R.silent = true
-				R.data = "farm"
-				R.auto = true
-				manageFarm(R)
-			--elseif args[1] == "tree" then
-				--R.silent = true
-				--R.data = "treefarm"
-				--R.auto = true
-				--manageTreeFarm(R) -- use file to read status
-			elseif args[1] == "find" then
-				-- missing turtle: player used 'tk find'
-				T:setUseLog(true)
-				T:setLogFileName("locate.txt")
-				T:appendLine("Booting succeeded")
-				T:appendLine("Block ahead: "..T:getBlockType("forward"))
-				T:appendLine("Block above: "..T:getBlockType("up"))
-				T:appendLine("Block below: "..T:getBlockType("down"))
-			elseif args[1] == "test" then
-				test(R)
-			elseif args[1]:find("v") ~= nil then
-				print("_HOST:")
-				print()
-				print(_HOST)
-				print()
-				print("Minecraft major version: "..mcMajorVersion)
-				print("Minecraft minor version: "..mcMinorVersion)
-				print("ccTweaked major version: "..ccMajorVersion)
-				print("ccTweaked minor version: "..ccMinorVersion)
-				print("tk version:              "..tkVersion)
-				print("clsTurtle version:       "..version)
-				print("\nEnter to exit")
+			end
+			T:setUseLog(true)
+			doContinue = true
+			utils.waitForInput()
+			--if dbug then
+				--menu.colourPrint("Enter to continue...", colors.lightBlue)
+				--read()
+			--end
+		elseif args[1] == "farm" then
+			R.silent = true
+			R.data = "farm"
+			R.auto = true
+			manageFarm(R)
+		--elseif args[1] == "tree" then
+			--R.silent = true
+			--R.data = "treefarm"
+			--R.auto = true
+			--manageTreeFarm(R) -- use file to read status
+		elseif args[1] == "find" then
+			-- missing turtle: player used 'tk find'
+			T:setUseLog(true)
+			T:setLogFileName("locate.txt")
+			T:appendLine("Booting succeeded")
+			T:appendLine("Block ahead: "..T:getBlockType("forward"))
+			T:appendLine("Block above: "..T:getBlockType("up"))
+			T:appendLine("Block below: "..T:getBlockType("down"))
+		elseif args[1] == "test" then
+			test(R)
+		elseif args[1]:find("v") ~= nil then
+			print("_HOST:")
+			print()
+			print(_HOST)
+			print()
+			print("Minecraft major version: "..mcMajorVersion)
+			print("Minecraft minor version: "..mcMinorVersion)
+			print("ccTweaked major version: "..ccMajorVersion)
+			print("ccTweaked minor version: "..ccMinorVersion)
+			print("tk version:              "..tkVersion)
+			print("clsTurtle version:       "..version)
+			print("\nEnter to exit")
+			read()
+		end
+	else
+		doContinue = true
+	end
+	if doContinue then
+		print("Minecraft major version: "..mcMajorVersion)
+		print("Bedrock level: "..bedrock)
+-- T:setUseLog(use, filename, delete)
+-- T:setUseLog(true, "log.txt", true)
+		if T:getUseLog() then
+			if T:saveToLog("Started with logging enabled", true) then
+				menu.colourPrint("\nEnter to continue...", colors.lightBlue)
 				read()
 			end
 		else
-			doContinue = true
+			print("Logging disabled")
+		end	
+		sleep(1)
+		while R.choice == 0 do
+			R = chooseTask(R)
 		end
-		if doContinue then
-			print("Minecraft major version: "..mcMajorVersion)
-			print("Bedrock level: "..bedrock)
--- T:setUseLog(use, filename, delete)
---T:setUseLog(true, "log.txt", true)
-			if T:getUseLog() then
-				if T:saveToLog("Started with logging enabled", true) then
-					menu.colourPrint("\nEnter to continue...", colors.lightBlue)
-					read()
-				end
-			else
-				print("Logging disabled")
-			end	
-			sleep(1)
-			while R.choice == 0 do
-				R = chooseTask(R)
-			end
-			if R.choice > 0 then
-				R = getTask(R)
-				if R.data ~= "quit" then
-					result = getTaskInventory(R) -- table of comments
-				end
+		if R.choice > 0 then
+			R = getTask(R)
+			if R.data ~= "quit" then
+				result = getTaskInventory(R) -- table of comments
 			end
 		end
-		T:clear()
-		table.insert(result, "Thank you for using 'survival toolkit'")
-		local clr = {colors.yellow, colors.orange, colors.green, colors.lightBlue}
-		local count = 1
-		for _, value in ipairs(result) do
-			--print(value)
-			--.print(text, fg, bg, width)
-			menu.colourPrint(tostring(value), clr[count])
-			count = count + 1
-			if count > #clr then
-				count = 1
-			end
+	end
+	T:clear()
+	table.insert(result, "Thank you for using 'survival toolkit'")
+	local clr = {colors.yellow, colors.orange, colors.green, colors.lightBlue}
+	local count = 1
+	for _, value in ipairs(result) do
+		--print(value)
+		--.print(text, fg, bg, width)
+		menu.colourPrint(tostring(value), clr[count])
+		count = count + 1
+		if count > #clr then
+			count = 1
 		end
-	else
-		print("Add missing files and restart")
 	end
 end
 
