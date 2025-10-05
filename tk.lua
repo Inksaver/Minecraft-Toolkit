@@ -1,6 +1,5 @@
-version = 20250916.0800
+local version = 20251005.0800
 
-local tkVersion = version -- otherwise over-written by clsTurtle when loaded
 --[[
 	**********Toolkit v2**********
 	Last edited: see version YYYYMMDD.HHMM
@@ -10355,9 +10354,12 @@ local function manageFarm(R)
 		-- Check if item is equipped and return it to slot
 		T:clear()
 		print("Checking equipment. Please wait...")
-		local equipped, slot = T:getEquipped("right", false)	-- see what is equipped and replace it 
-		if equipped == itemRequired then
-			equipped, slot = T:getEquipped("right", true)		-- remove item and return slot
+		local itemLeft, itemRight = T:getEquipped()
+		if itemLeft == itemRequired then
+			local equipped, slot = T:removeEquipped("left")		-- remove item and return slot
+			return slot
+		elseif itemRight == itemRequired then
+			local equipped, slot = T:removeEquipped("right")		-- remove item and return slot
 			return slot
 		end
 
@@ -15889,8 +15891,7 @@ Enter to exit]]
 			print("Minecraft minor version: "..mcMinorVersion)
 			print("ccTweaked major version: "..ccMajorVersion)
 			print("ccTweaked minor version: "..ccMinorVersion)
-			print("tk version:              "..tkVersion)
-			print("clsTurtle version:       "..version)
+			print("tk version:              "..version)
 			print("\nEnter to exit")
 			read()
 		end
