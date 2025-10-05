@@ -1,4 +1,4 @@
-version = 20250915.1500
+version = 20251004.2000
 --[[
 	Will auto-download clsTurtle.lua
 	Used to move turtle in multiple directions
@@ -58,8 +58,10 @@ function clear(setCP)
 	term.clear()
 	term.setCursorPos(1, 1)
 	if setCP then
-		term.write("use: f u d b r l s(lot) p(lace) x(dig)")
+		term.write("directions: f u d b r l")
 		term.setCursorPos(1, 2)
+		term.write("or: s(lot) p(lace) x(dig) t(unnel)")
+		term.setCursorPos(1, 3)
 	end
 end
 
@@ -82,6 +84,10 @@ function getCommand()
 			cmd = "s"
 			term.setCursorPos(1, row)
 			term.write("slot no? "..cmd.."_")
+		elseif key == keys.t then -- user wants to tunnel
+			cmd = "t"
+			term.setCursorPos(1, row)
+			term.write("length? "..cmd.."_")
 		elseif key == keys.p or key == keys.x then -- user wants to place or excavate
 			cmd = keys.getName(key)
 			term.setCursorPos(1, row)
@@ -117,7 +123,7 @@ function getCommand()
 				elseif c == "r" or c == "l" then
 					cmd = cmd..num
 					break
-				elseif  c == "f" or c == "b" or c == "u" or c == "d" or c == "r" or c == "l" then
+				elseif  c == "f" or c == "b" or c == "u" or c == "d" or c == "r" or c == "l" or c == "t" then
 					cmd = cmd..num
 					term.setCursorPos(1, row)
 					term.write("0-9 or Enter? "..cmd.."_")
@@ -153,6 +159,18 @@ function getFileFromGithub(url, pathAndFile)
 	end
 end
 
+function tunnel(length)
+	-- T:go(path, useTorch, torchInterval, leaveExisting, preferredBlock)
+	local preferredBlock = T:getMostItem("", false)
+	for l = 1, length do
+		if l < length then
+			T:go("x0C2F1", false, 0, true, preferredBlock)
+		else
+			T:go("x0C2", false, 0, true, preferredBlock)
+		end
+	end
+end
+
 function main()
 	local url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
 	if not checkLibs("lib", "clsTurtle") then
@@ -170,7 +188,14 @@ function main()
 	local cmd = checkArgs() -- empty string or cmd eg go r1f5u2
 	local direction = {"up", "forward", "down"}
 	if cmd ~= "" then
-		T:go(cmd)
+		if cmd:sub(1,1):lower() == "t" then
+			-- tunnel # length
+			cmd = cmd:gsub(" ", "") -- remove spaces from path
+			local length = tonumber(cmd:sub(2))
+			tunnel(length)
+		else
+			T:go(cmd)
+		end
 	else
 		sleep(2)
 		clear(true)
@@ -193,6 +218,8 @@ function main()
 					print("Place "..slotContains.." count: "..slotCount.." damage: "..tostring(slotDamage).." Enter")
 					read()
 					T:place(slotContains, slotDamage, direction[modifier + 1], false)
+				elseif action == "T" then --tunnel
+					tunnel(tonumber(modifier))
 				else
 					T:go(cmd)
 				end
