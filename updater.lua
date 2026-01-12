@@ -1,4 +1,4 @@
-version = 20250915.2000
+version = 20260112.1200
 --[[
 	Last edited: see version YYYYMMDD.HHMM
 	This will add all GUI toolkit (tk3) files and libraries
@@ -234,7 +234,7 @@ function main()
 	
 	local oldFileList =
 	{	
-		"b.lua", "d.lua", "f.lua", "flint.lua", "go.lua", "l.lua", "lavaRefuel.lua", "p.lua", "r.lua", "u.lua", "x.lua"
+		"b.lua", "d.lua", "f.lua", "flint.lua", "go.lua", "l.lua", "lavaRefuel.lua", "p.lua", "r.lua", "u.lua", "updater.lua", "x.lua"
 	}
 	
 	local fileList = 
