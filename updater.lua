@@ -1,4 +1,4 @@
-version = 20260112.1200
+version = 20260119.1700
 --[[
 	Last edited: see version YYYYMMDD.HHMM
 	This will add all GUI toolkit (tk3) files and libraries
@@ -9,6 +9,7 @@ version = 20260112.1200
 local tmpDir = "tmp"	-- set temp folder name to 'tmp'
 local files = {}		-- table of files
 local fileSizes = {}	-- table of current file sizes
+local updatedFileList = {}
 
 function clear()
 	term.clear()
@@ -187,6 +188,7 @@ computer_space_limit = 2000000 or more
 			if isNewer(fileName, tmpDir) then
 				moveFile(fileName, tmpDir) 					-- move tmp copy to correct location
 				count = count  + 1
+				table.insert(updatedFileList, fileName)
 			else
 				log(fileName.." is newer or unchanged")
 			end
@@ -264,15 +266,17 @@ function main()
 	
 	local freeSpace = fs.getFreeSpace("./")
 	log("Free space before update: "..freeSpace.."\n")
-	clear()
+	
 	
 	local url = "https://raw.githubusercontent.com/Inksaver/Minecraft-Toolkit/main/"
 	for _, file in ipairs(oldFileList) do 					
+		clear()
 		updated = updated + process(url, file, tmpDir, fileSizes)		-- download files from Github to tmp/
 	end
 	
 	url = "https://raw.githubusercontent.com/Inksaver/Computercraft-GUI/main/"
 	for _, file in ipairs(fileList) do 					
+		clear()
 		updated = updated + process(url, file, tmpDir, fileSizes)		-- download files from Github to tmp/
 	end
 	
@@ -287,6 +291,9 @@ function main()
 	clear()
 	log("\nOperation Complete ")
 	log(updated.." files updated")
+	if #updatedFileList > 0 then
+		log("updated files = "..textutils.serialise(updatedFileList))
+	end
 
 	print("See update.log for details")
 end
