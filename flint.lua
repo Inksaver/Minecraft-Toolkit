@@ -1,4 +1,4 @@
-version = 20250915.1500
+version = 20261111.1800
 -- Last edited: see version YYYYMMDD.HHMM
 function clear()
 	term.clear()
@@ -8,7 +8,7 @@ end
 function main()
 	clear()
 	print("Make sure there is empty space above")
-	print("Place gravel into max 15 slots")
+	print("Place gravel / clay into max 15 slots")
 	print()
 	print("Press Enter when ready")
 	read()
@@ -17,7 +17,7 @@ function main()
 		if turtle.getItemCount(slot) > 0 then
 			turtle.select(slot)
 			data = turtle.getItemDetail(slot)
-			if string.find(data.name, "gravel") ~= nil then
+			if data.name:find("gravel") ~= nil or data.name == "minecraft:clay" then
 				while turtle.placeUp() do
 					turtle.digUp()
 				end
